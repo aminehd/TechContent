@@ -277,40 +277,42 @@ def draw_gantt(draw, x, y, w, h, n, time_arr, completion_times, current_time,
 #  CODE PANEL
 # ═══════════════════════════════════════════════════
 
-def draw_code_panel(draw, x, y, w, h, source_lines, current_line, font, font_sm):
+def draw_code_panel(draw, x, y, w, h, source_lines, current_line, font, font_sm,
+                    font_code=None):
     """Draw source code with line highlight."""
     draw_rounded_rect(draw, (x, y, x+w, y+h), 8, BG_CODE, GRID, 1)
-    draw.text((x + 10, y + 6), "SOURCE", fill=CYAN, font=font_sm)
+    draw.text((x + 10, y + 8), "SOURCE", fill=CYAN, font=font_sm)
 
-    code_y = y + 26
-    line_h = 18
+    cf = font_code or font  # code font (bigger)
+    code_y = y + 32
+    line_h = 22              # taller lines for bigger font
     # Show lines around current
-    context = 6
+    context = 7
     start = max(0, current_line - context - 1)
     end = min(len(source_lines), current_line + context)
 
     for i in range(start, end):
         ly = code_y + (i - start) * line_h
-        if ly + line_h > y + h:
+        if ly + line_h > y + h - 4:
             break
 
         is_current = (i == current_line - 1)
 
         if is_current:
-            draw.rectangle([x + 2, ly - 1, x + w - 2, ly + line_h - 1],
-                          fill=(35, 50, 60))
-            draw.text((x + 8, ly), "►", fill=GREEN, font=font_sm)
+            draw.rectangle([x + 2, ly - 2, x + w - 2, ly + line_h - 1],
+                          fill=(35, 55, 65))
+            draw.text((x + 8, ly), "►", fill=GREEN, font=cf)
 
         line_num_color = GREEN if is_current else DIM
-        draw.text((x + 22, ly), f"{i+1:3}", fill=line_num_color, font=font_sm)
+        draw.text((x + 26, ly), f"{i+1:3}", fill=line_num_color, font=cf)
 
         code_color = WHITE if is_current else (140, 200, 140)
         text = source_lines[i] if i < len(source_lines) else ""
-        # Truncate
-        max_chars = (w - 65) // 7
+        # Truncate based on actual available width
+        max_chars = (w - 80) // 9   # ~9px per char at font 15
         if len(text) > max_chars:
             text = text[:max_chars - 1] + "…"
-        draw.text((x + 55, ly), text, fill=code_color, font=font_sm)
+        draw.text((x + 68, ly), text, fill=code_color, font=cf)
 
 
 # ═══════════════════════════════════════════════════
@@ -493,35 +495,37 @@ def render_frame_image(frame_data, frame_idx, total_frames,
     img = Image.new("RGB", (img_w, img_h), BG)
     draw = ImageDraw.Draw(img)
 
-    font_lg = load_font_bold(20)
-    font_md = load_font(16)
-    font_sm = load_font(13)
-    font_xs = load_font(11)
+    font_lg = load_font_bold(24)
+    font_md = load_font(18)
+    font_sm = load_font(16)
+    font_xs = load_font(13)
+    font_code = load_font(15)       # dedicated code font
 
     # ── Header ──
-    draw.rectangle([0, 0, img_w, 44], fill=(20, 22, 32))
-    draw.text((16, 10), "LC 2050 — Parallel Courses III", fill=CYAN, font=font_lg)
-    draw.text((img_w - 200, 14), f"Frame {frame_idx+1}/{total_frames}",
+    draw.rectangle([0, 0, img_w, 50], fill=(20, 22, 32))
+    draw.text((16, 12), "LC 2050 — Parallel Courses III", fill=CYAN, font=font_lg)
+    draw.text((img_w - 220, 16), f"Frame {frame_idx+1}/{total_frames}",
               fill=GRAY, font=font_sm)
 
     # Description bar
-    draw.rectangle([0, 44, img_w, 74], fill=(25, 28, 40))
-    draw.text((16, 50), frame_data["desc"], fill=WHITE, font=font_md)
+    draw.rectangle([0, 50, img_w, 84], fill=(25, 28, 40))
+    draw.text((16, 56), frame_data["desc"], fill=WHITE, font=font_md)
 
     # ── Layout zones ──
-    # Left: Graph (60%)  Right: Code + Vars (40%)
-    graph_x, graph_y = 16, 84
-    graph_w, graph_h = int(img_w * 0.58), int(img_h * 0.52)
+    # Left: Graph (48%)  Right: Code + Vars (52%) — wider code panel
+    graph_x, graph_y = 16, 94
+    graph_w = int(img_w * 0.46)
+    graph_h = int(img_h * 0.50)
 
     code_x = graph_x + graph_w + 16
-    code_y = 84
+    code_y = 94
     code_w = img_w - code_x - 16
-    code_h = int(img_h * 0.35)
+    code_h = int(img_h * 0.38)     # taller code panel
 
     vars_x = code_x
     vars_y = code_y + code_h + 10
     vars_w = code_w // 2 - 5
-    vars_h = int(img_h * 0.16)
+    vars_h = int(img_h * 0.13)
 
     queue_x = vars_x + vars_w + 10
     queue_y = vars_y
@@ -529,7 +533,7 @@ def render_frame_image(frame_data, frame_idx, total_frames,
     queue_h = vars_h
 
     gantt_x = 16
-    gantt_y = graph_y + graph_h + 16
+    gantt_y = max(graph_y + graph_h, vars_y + vars_h) + 16
     gantt_w = img_w - 32
     gantt_h = img_h - gantt_y - 16
 
@@ -579,11 +583,12 @@ def render_frame_image(frame_data, frame_idx, total_frames,
 
     # ── Draw Code Panel ──
     draw_code_panel(draw, code_x, code_y, code_w, code_h,
-                    frame_data["source"], frame_data["line"], font_sm, font_xs)
+                    frame_data["source"], frame_data["line"], font_sm, font_xs,
+                    font_code=font_code)
 
     # ── Draw Variables Panel ──
     draw_vars_panel(draw, vars_x, vars_y, vars_w, vars_h,
-                    frame_data["variables"], font_xs)
+                    frame_data["variables"], font_sm)
 
     # ── Draw Queue Panel ──
     draw_queue_panel(draw, queue_x, queue_y, queue_w, queue_h,
