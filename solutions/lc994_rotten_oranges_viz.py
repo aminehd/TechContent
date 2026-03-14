@@ -7,6 +7,7 @@ Renders: Grid with oranges + BFS wave animation + code panel + queue + timer
 Outputs: MP4 video
 """
 import os
+import re
 import sys
 import subprocess
 import tempfile
@@ -92,148 +93,309 @@ def load_font_bold(size):
 #  DRAWING PRIMITIVES
 # ═══════════════════════════════════════════════════
 
+# ═══════════════════════════════════════════════════
+#  ANIMATION UTILITIES
+# ═══════════════════════════════════════════════════
+
+def lerp_color(c1, c2, t):
+    t = max(0.0, min(1.0, t))
+    return tuple(int(a + (b - a) * t) for a, b in zip(c1, c2))
+
+def ease_out_cubic(t):
+    t = max(0.0, min(1.0, t))
+    return 1 - (1 - t) ** 3
+
+def ease_in_out(t):
+    t = max(0.0, min(1.0, t))
+    return t * t * (3 - 2 * t)
+
+def bell(t):
+    """Peaks at t=0.5, zero at 0 and 1."""
+    return sin(max(0.0, min(1.0, t)) * pi)
+
+
 def draw_rounded_rect(draw, bbox, radius, fill, outline=None, width=1):
     draw.rounded_rectangle(bbox, radius=radius, fill=fill, outline=outline, width=width)
 
 
-def draw_cell(draw, x, y, size, state, font, font_sm, wave_ring=False, coord_text=None):
-    """Draw a single grid cell (orange or empty)."""
-    fill = CELL_COLORS.get(state, CELL_COLORS[EMPTY])
-    border = CELL_BORDER.get(state, CELL_BORDER[EMPTY])
-    bw = 2
+def draw_cell(draw, x, y, size, state, font, font_sm,
+              wave_ring=False, anim_t=0.0, prev_state=None):
+    """Draw a grid cell with optional animated transition."""
+    # Interpolate fill/border during transition
+    if anim_t > 0 and prev_state is not None and prev_state != state:
+        fill   = lerp_color(CELL_COLORS.get(prev_state, CELL_COLORS[EMPTY]),
+                            CELL_COLORS.get(state,      CELL_COLORS[EMPTY]), anim_t)
+        border = lerp_color(CELL_BORDER.get(prev_state, CELL_BORDER[EMPTY]),
+                            CELL_BORDER.get(state,      CELL_BORDER[EMPTY]), anim_t)
+    else:
+        fill   = CELL_COLORS.get(state, CELL_COLORS[EMPTY])
+        border = CELL_BORDER.get(state, CELL_BORDER[EMPTY])
 
-    # Glow ring for just-rotten cells
+    # ── Neon glow layers ──
+    glow_intensity = 0.0
     if wave_ring:
-        for r in range(3):
-            glow_col = (255, 120 - r * 30, 50 - r * 15)
+        glow_intensity = 1.0
+    elif anim_t > 0 and prev_state is not None and prev_state != state:
+        glow_intensity = bell(anim_t)   # peaks at t=0.5
+
+    if glow_intensity > 0.01:
+        n_layers = 7
+        for g in range(n_layers, 0, -1):
+            strength = glow_intensity * (g / n_layers)
+            gc = lerp_color(BG, (255, 210, 60), strength)
+            pad = g * 3
             draw.rounded_rectangle(
-                [x - r - 1, y - r - 1, x + size + r + 1, y + size + r + 1],
-                radius=6 + r, outline=glow_col, width=1
+                [x - pad, y - pad, x + size + pad, y + size + pad],
+                radius=5 + pad, outline=gc, width=2
             )
 
     draw.rounded_rectangle([x, y, x + size, y + size],
-                          radius=5, fill=fill, outline=border, width=bw)
+                           radius=5, fill=fill, outline=border, width=2)
 
-    # Face / icon
-    if state == FRESH:
-        # Draw a cute orange circle
-        cx, cy = x + size // 2, y + size // 2
-        r = size // 3
+    # ── Face — cross-fade at anim midpoint ──
+    face_state = state
+    if anim_t > 0 and prev_state is not None and anim_t < 0.5:
+        face_state = prev_state
+
+    cx, cy = x + size // 2, y + size // 2
+    r = size // 3
+
+    if face_state == FRESH:
         draw.ellipse([cx - r, cy - r, cx + r, cy + r],
-                    fill=(255, 200, 60), outline=(220, 160, 30), width=2)
-        # Smiley
+                     fill=(255, 200, 60), outline=(220, 160, 30), width=2)
         eye_r = max(2, r // 5)
         draw.ellipse([cx - r//3 - eye_r, cy - r//4 - eye_r,
-                     cx - r//3 + eye_r, cy - r//4 + eye_r], fill=(60, 40, 10))
+                      cx - r//3 + eye_r, cy - r//4 + eye_r], fill=(60, 40, 10))
         draw.ellipse([cx + r//3 - eye_r, cy - r//4 - eye_r,
-                     cx + r//3 + eye_r, cy - r//4 + eye_r], fill=(60, 40, 10))
-        # Smile arc
+                      cx + r//3 + eye_r, cy - r//4 + eye_r], fill=(60, 40, 10))
         draw.arc([cx - r//3, cy - r//6, cx + r//3, cy + r//3],
-                start=10, end=170, fill=(60, 40, 10), width=max(1, r//6))
+                 start=10, end=170, fill=(60, 40, 10), width=max(1, r//6))
 
-    elif state == ROTTEN or state == JUST_ROTTEN:
-        cx, cy = x + size // 2, y + size // 2
-        r = size // 3
-        rot_color = (80, 45, 15) if state == ROTTEN else (160, 60, 20)
+    elif face_state in (ROTTEN, JUST_ROTTEN):
+        rot_color = (80, 45, 15) if face_state == ROTTEN else (160, 60, 20)
         draw.ellipse([cx - r, cy - r, cx + r, cy + r],
-                    fill=rot_color, outline=(50, 30, 10), width=2)
-        # X eyes
+                     fill=rot_color, outline=(50, 30, 10), width=2)
         eye_r = max(2, r // 4)
         for ex in [cx - r//3, cx + r//3]:
             draw.line([ex - eye_r, cy - r//4 - eye_r, ex + eye_r, cy - r//4 + eye_r],
-                     fill=(200, 200, 180), width=max(1, r//6))
+                      fill=(200, 200, 180), width=max(1, r//6))
             draw.line([ex + eye_r, cy - r//4 - eye_r, ex - eye_r, cy - r//4 + eye_r],
-                     fill=(200, 200, 180), width=max(1, r//6))
-        # Frown
+                      fill=(200, 200, 180), width=max(1, r//6))
         draw.arc([cx - r//3, cy + r//8, cx + r//3, cy + r//2],
-                start=190, end=350, fill=(200, 200, 180), width=max(1, r//6))
-
-        # Stink lines for rotten
-        if state == ROTTEN:
+                 start=190, end=350, fill=(200, 200, 180), width=max(1, r//6))
+        if face_state == ROTTEN:
             for sx in [-r//2, 0, r//2]:
                 draw.line([cx + sx, cy - r - 4, cx + sx + 2, cy - r - 10],
-                         fill=(120, 160, 100), width=1)
+                          fill=(120, 160, 100), width=1)
 
-    # Coordinate label (small, below cell)
-    if coord_text:
-        bb = draw.textbbox((0, 0), coord_text, font=font_sm)
-        tw = bb[2] - bb[0]
-        draw.text((x + size // 2 - tw // 2, y + size + 2),
-                 coord_text, fill=DIM, font=font_sm)
+
+def draw_particles(draw, cx, cy, cell_size, t):
+    """Burst of 8 particles radiating from an infected cell. t in [0, 1]."""
+    if t <= 0 or t >= 1:
+        return
+    max_dist = cell_size * 1.5
+    for i in range(8):
+        angle = (i / 8) * 2 * pi
+        dist = ease_out_cubic(t) * max_dist
+        px = int(cx + cos(angle) * dist)
+        py = int(cy + sin(angle) * dist)
+        fade = max(0.0, 1.0 - t * 1.4)
+        pr = max(1, int(5 * fade))
+        color = lerp_color(BG, (255, 170, 40), fade)
+        draw.ellipse([px - pr, py - pr, px + pr, py + pr], fill=color)
+
+
+def apply_scanlines(img):
+    """Subtle CRT scanline overlay for the pixi aesthetic."""
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
+    for y in range(0, img.size[1], 3):
+        d.line([(0, y), (img.size[0], y)], fill=(0, 0, 0, 28))
+    base = img.convert("RGBA")
+    base.alpha_composite(overlay)
+    return base.convert("RGB")
+
+
+# ═══════════════════════════════════════════════════
+#  SYNTAX HIGHLIGHTING
+# ═══════════════════════════════════════════════════
+
+SYN_KEYWORD  = (190, 120, 255)   # purple  — def, for, while, if, return
+SYN_BUILTIN  = (80,  190, 255)   # sky blue — range, len, deque
+SYN_NUMBER   = (255, 200, 70)    # warm yellow
+SYN_COMMENT  = (90,  150, 90)    # muted green
+SYN_STRING   = (255, 160, 90)    # soft orange
+SYN_OPERATOR = (80,  230, 220)   # cyan
+SYN_DEFAULT  = (170, 215, 170)   # soft green-white
+SYN_BRIGHT   = (235, 245, 235)   # near-white for current line
+
+PY_KEYWORDS = {'def','for','in','if','elif','else','while','return',
+               'and','or','not','True','False','None','import','from'}
+PY_BUILTINS = {'range','len','append','popleft','deque','int','str','list'}
+
+_TOKEN_RE = re.compile(
+    r'(#[^\n]*)'                                    # comment
+    r'|("(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\')'   # string
+    r'|(\b\d+\b)'                                   # number
+    r'|(\b[a-zA-Z_]\w*\b)'                          # identifier
+    r'|([=<>!+\-*/:%\[\]{}(),.])'                   # operator/punct
+    r'|(\s+)'                                       # whitespace
+)
+
+def tokenize_line(text, is_current=False):
+    if text.lstrip().startswith('#'):
+        return [(text, SYN_COMMENT)]
+    tokens = []
+    for m in _TOKEN_RE.finditer(text):
+        t = m.group(0)
+        if   m.group(1): tokens.append((t, SYN_COMMENT))
+        elif m.group(2): tokens.append((t, SYN_STRING))
+        elif m.group(3): tokens.append((t, SYN_NUMBER))
+        elif m.group(4):
+            if   t in PY_KEYWORDS: tokens.append((t, SYN_KEYWORD))
+            elif t in PY_BUILTINS: tokens.append((t, SYN_BUILTIN))
+            else:                  tokens.append((t, SYN_BRIGHT if is_current else SYN_DEFAULT))
+        elif m.group(5): tokens.append((t, SYN_OPERATOR))
+        else:            tokens.append((t, SYN_DEFAULT))
+    return tokens or [(text, SYN_DEFAULT)]
 
 
 # ═══════════════════════════════════════════════════
 #  CODE PANEL
 # ═══════════════════════════════════════════════════
 
-def draw_code_panel(draw, x, y, w, h, source_lines, current_line, font_code, font_sm):
-    """Draw source code with line highlight."""
+def draw_code_panel(draw, x, y, w, h, source_lines, current_line, font_code, font_sm,
+                    prev_line=None, tween_t=0.0):
+    """Draw full source code. Highlight bar slides smoothly between lines during tween."""
     draw_rounded_rect(draw, (x, y, x+w, y+h), 8, BG_CODE, GRID_LINE, 1)
     draw.text((x + 10, y + 8), "SOURCE", fill=CYAN, font=font_sm)
 
     code_y = y + 32
-    line_h = 22
-    context = 8
-    start = max(0, current_line - context - 1)
-    end = min(len(source_lines), current_line + context)
+    line_h = 20
 
-    for i in range(start, end):
-        ly = code_y + (i - start) * line_h
+    # ── Sliding highlight bar ──
+    curr_bar_y = code_y + (current_line - 1) * line_h
+    if prev_line and prev_line != current_line and tween_t > 0:
+        prev_bar_y = code_y + (prev_line - 1) * line_h
+        t_eased    = ease_in_out(tween_t)
+        bar_y      = int(prev_bar_y + (curr_bar_y - prev_bar_y) * t_eased)
+    else:
+        bar_y = curr_bar_y
+
+    # Background fill + left accent
+    draw.rectangle([x + 2, bar_y - 1, x + w - 2, bar_y + line_h], fill=(35, 55, 65))
+    draw.rectangle([x + 2, bar_y - 1, x + 5,     bar_y + line_h], fill=GREEN)
+
+    # Faint trail when sliding (shows where we came from)
+    if prev_line and prev_line != current_line and 0 < tween_t < 1:
+        trail_alpha = 1.0 - ease_in_out(tween_t)
+        trail_col   = lerp_color(BG_CODE, (35, 55, 65), trail_alpha * 0.6)
+        prev_bar_y  = code_y + (prev_line - 1) * line_h
+        draw.rectangle([x + 2, prev_bar_y - 1, x + w - 2, prev_bar_y + line_h],
+                       fill=trail_col)
+
+    for i, raw_text in enumerate(source_lines):
+        ly = code_y + i * line_h
         if ly + line_h > y + h - 4:
             break
 
-        is_current = (i == current_line - 1)
+        is_at_bar    = (bar_y - 2 <= ly <= bar_y + 2)
+        is_dest      = (i == current_line - 1)
+        is_source    = (prev_line and i == prev_line - 1)
 
-        if is_current:
-            draw.rectangle([x + 2, ly - 2, x + w - 2, ly + line_h - 1],
-                          fill=(35, 55, 65))
+        # Animate ► marker: fade out from prev, fade in at dest
+        if is_at_bar:
             draw.text((x + 8, ly), "►", fill=GREEN, font=font_code)
+        elif is_dest and tween_t > 0:
+            fade = lerp_color(BG_CODE, GREEN, ease_in_out(tween_t))
+            draw.text((x + 8, ly), "►", fill=fade, font=font_code)
+        elif is_source and tween_t > 0:
+            fade = lerp_color(GREEN, BG_CODE, ease_in_out(tween_t))
+            draw.text((x + 8, ly), "►", fill=fade, font=font_code)
 
-        line_num_color = GREEN if is_current else DIM
-        draw.text((x + 26, ly), f"{i+1:3}", fill=line_num_color, font=font_code)
+        # Line number color
+        if is_dest:
+            ln_col = lerp_color(DIM, GREEN, ease_in_out(tween_t)) if tween_t > 0 else GREEN
+        elif is_source and tween_t > 0:
+            ln_col = lerp_color(GREEN, DIM, ease_in_out(tween_t))
+        else:
+            ln_col = DIM
+        draw.text((x + 26, ly), f"{i+1:3}", fill=ln_col, font=font_code)
 
-        code_color = WHITE if is_current else (140, 200, 140)
-        text = source_lines[i] if i < len(source_lines) else ""
-        max_chars = (w - 80) // 9
-        if len(text) > max_chars:
-            text = text[:max_chars - 1] + "…"
-        draw.text((x + 68, ly), text, fill=code_color, font=font_code)
+        # Code text — highlight destination line, dim others
+        is_current_for_color = is_dest
+        cx = x + 68
+        tokens = tokenize_line(raw_text, is_current_for_color)
+        for tok, color in tokens:
+            draw.text((cx, ly), tok, fill=color, font=font_code)
+            bb = draw.textbbox((cx, ly), tok, font=font_code)
+            cx = bb[2]
+            if cx > x + w - 8:
+                break
 
 
 # ═══════════════════════════════════════════════════
 #  QUEUE PANEL
 # ═══════════════════════════════════════════════════
 
-def draw_queue_panel(draw, x, y, w, h, queue_contents, font, font_sm, label="QUEUE (BFS)"):
-    """Draw the BFS queue showing (row, col) pairs."""
+def draw_queue_panel(draw, x, y, w, h, queue_contents, font, font_sm, label="QUEUE  (BFS FRONTIER)"):
+    """Draw the BFS queue — large boxes with arrows and FRONT label."""
     draw_rounded_rect(draw, (x, y, x+w, y+h), 8, BG_PANEL, GRID_LINE, 1)
     draw.text((x + 10, y + 6), label, fill=CYAN, font=font_sm)
 
-    qx = x + 10
-    qy = y + 28
-    box_w = 52
-    box_h = 28
-    gap = 4
-    items_per_row = max(1, (w - 20) // (box_w + gap))
+    box_w   = 82
+    box_h   = 46
+    arrow_w = 18
+    gap     = arrow_w + 4
+    qx      = x + 14
+    qy      = y + 30
 
-    for i, (r, c) in enumerate(queue_contents[:items_per_row * 3]):  # max 3 rows
+    items_per_row = max(1, (w - 20) // (box_w + gap))
+    visible = queue_contents[: items_per_row * 2]
+
+    for i, (r, c) in enumerate(visible):
         row_idx = i // items_per_row
         col_idx = i % items_per_row
         bx = qx + col_idx * (box_w + gap)
-        by = qy + row_idx * (box_h + gap)
-        if by + box_h > y + h - 5:
+        by = qy + row_idx * (box_h + 10)
+        if by + box_h > y + h - 6:
             break
 
+        is_front = (i == 0)
+        fill_col   = (220, 90, 30) if is_front else (130, 55, 18)
+        border_col = (255, 180, 60) if is_front else ORANGE
+
+        # Neon outline for front item
+        if is_front:
+            for g in range(3, 0, -1):
+                gc = lerp_color(BG, (255, 200, 60), g / 5)
+                draw.rounded_rectangle(
+                    [bx - g, by - g, bx + box_w + g, by + box_h + g],
+                    radius=6 + g, outline=gc, width=1
+                )
+
         draw.rounded_rectangle([bx, by, bx + box_w, by + box_h],
-                              radius=4, fill=(200, 80, 30), outline=ORANGE, width=2)
-        text = f"{r},{c}"
-        bb = draw.textbbox((0, 0), text, font=font_sm)
-        tw = bb[2] - bb[0]
-        draw.text((bx + box_w//2 - tw//2, by + 4), text,
-                 fill=WHITE, font=font_sm)
+                               radius=6, fill=fill_col, outline=border_col, width=2)
+
+        # FRONT badge
+        if is_front:
+            draw.text((bx + 4, by + 2), "FRONT", fill=(255, 220, 80), font=font_sm)
+
+        text = f"({r}, {c})"
+        bb   = draw.textbbox((0, 0), text, font=font)
+        tw   = bb[2] - bb[0]
+        th   = bb[3] - bb[1]
+        ty   = by + (box_h - th) // 2 + (6 if is_front else 0)
+        draw.text((bx + box_w // 2 - tw // 2, ty), text, fill=WHITE, font=font)
+
+        # Arrow → between items (not after last)
+        if i < len(visible) - 1 and (i + 1) % items_per_row != 0:
+            ax = bx + box_w + 4
+            ay = by + box_h // 2
+            draw.text((ax, ay - 8), "→", fill=ORANGE, font=font)
 
     if not queue_contents:
-        draw.text((qx, qy + 4), "(empty)", fill=DIM, font=font_sm)
+        draw.text((qx, qy + 10), "(empty)", fill=DIM, font=font)
 
 
 # ═══════════════════════════════════════════════════
@@ -250,6 +412,33 @@ def draw_stats_panel(draw, x, y, w, h, stats, font, font_sm):
         draw.text((x + 12, sy), f"{key}:", fill=GRAY, font=font_sm)
         draw.text((x + 12 + len(key) * 9 + 10, sy), str(val), fill=color, font=font)
         sy += 26
+
+
+# ═══════════════════════════════════════════════════
+#  QUESTION PANEL
+# ═══════════════════════════════════════════════════
+
+QUESTION_LINES = [
+    "Given an m×n grid where each cell is:",
+    "  0 = empty  |  1 = fresh orange  |  2 = rotten orange",
+    "",
+    "Every minute, any fresh orange 4-directionally",
+    "adjacent to a rotten one becomes rotten.",
+    "",
+    "Return the minimum number of minutes until no",
+    "fresh orange remains, or -1 if impossible.",
+]
+
+def draw_question_panel(draw, x, y, w, h, font, font_sm):
+    draw_rounded_rect(draw, (x, y, x+w, y+h), 8, BG_PANEL, GRID_LINE, 1)
+    draw.text((x + 10, y + 6), "PROBLEM", fill=CYAN, font=font_sm)
+    qy = y + 28
+    line_h = 18
+    for line in QUESTION_LINES:
+        if qy + line_h > y + h - 4:
+            break
+        draw.text((x + 12, qy), line, fill=(160, 180, 160), font=font)
+        qy += line_h
 
 
 # ═══════════════════════════════════════════════════
@@ -428,18 +617,38 @@ def simulate(grid):
 #  RENDER FRAME → IMAGE
 # ═══════════════════════════════════════════════════
 
+def desc_style(desc):
+    """Return (bg, text_color, accent) based on event type."""
+    d = desc.lower()
+    if any(x in d for x in ["all oranges rotten", "impossible", "answer"]):
+        return (12, 38, 18), GREEN,  (0, 200, 90)
+    elif "infected" in d:
+        return (44, 16, 16), (255, 130, 80), RED
+    elif "begins" in d:
+        return (14, 26, 50), CYAN,   BLUE
+    elif "complete" in d:
+        return (16, 38, 28), GREEN,  GREEN
+    elif "scanning" in d or "found" in d:
+        return (20, 22, 38), GRAY,   BLUE
+    else:
+        return (25, 28, 40), WHITE,  GRAY
+
+
 def render_frame_image(frame_data, frame_idx, total_frames,
                        orig_grid, total_fresh_start,
-                       img_w=1920, img_h=1080):
+                       problem_desc="",
+                       img_w=1920, img_h=1080,
+                       prev_grid=None, tween_t=0.0,
+                       prev_line=None):
     """Render one simulation frame to a PIL Image."""
     img = Image.new("RGB", (img_w, img_h), BG)
     draw = ImageDraw.Draw(img)
 
-    font_lg = load_font_bold(24)
-    font_md = load_font(18)
-    font_sm = load_font(15)
-    font_xs = load_font(12)
-    font_code = load_font(15)
+    font_lg = load_font_bold(26)
+    font_md = load_font(20)
+    font_sm = load_font(16)
+    font_xs = load_font(13)
+    font_code = load_font(19)
 
     grid = frame_data["grid"]
     rows = len(grid)
@@ -447,46 +656,80 @@ def render_frame_image(frame_data, frame_idx, total_frames,
     highlight = frame_data.get("highlight_cells", set())
 
     # ── Header ──
-    draw.rectangle([0, 0, img_w, 50], fill=(20, 22, 32))
+    draw.rectangle([0, 0, img_w, 52], fill=(20, 22, 32))
     draw.text((16, 12), "LC 994 — Rotting Oranges 🍊", fill=ORANGE, font=font_lg)
-    draw.text((img_w - 220, 16), f"Frame {frame_idx+1}/{total_frames}",
+    draw.text((img_w - 240, 16), f"Frame {frame_idx+1}/{total_frames}",
               fill=GRAY, font=font_sm)
 
-    # Description bar
-    draw.rectangle([0, 50, img_w, 86], fill=(25, 28, 40))
-    draw.text((16, 58), frame_data["desc"], fill=WHITE, font=font_md)
+    # Static problem description bar
+    draw.rectangle([0, 52, img_w, 84], fill=(18, 20, 30))
+    draw.text((16, 60), problem_desc, fill=GRAY, font=font_sm)
+
+    # Current step bar — color-coded by event type
+    step_bg, step_fg, step_accent = desc_style(frame_data["desc"])
+    draw.rectangle([0, 84, img_w, 120], fill=step_bg)
+    draw.rectangle([0, 84, 6, 120], fill=step_accent)
+    draw.text((16, 92), frame_data["desc"], fill=step_fg, font=font_md)
 
     # ── Layout ──
-    # Left: Grid (50%)  Right: Code + Queue + Stats (50%)
-    grid_panel_x = 16
-    grid_panel_y = 96
-    grid_panel_w = int(img_w * 0.48)
-    grid_panel_h = int(img_h * 0.60)
+    # Left:  Question desc (top) + Grid (below)
+    # Right: Full code (top) + Queue + Stats (below)
+    # Full width bottom: Legend
 
-    code_x = grid_panel_x + grid_panel_w + 16
-    code_y = 96
-    code_w = img_w - code_x - 16
-    code_h = int(img_h * 0.40)
+    question_x = 16
+    question_y = 130
+    question_w = int(img_w * 0.45)
+    question_h = 110
 
-    queue_x = code_x
-    queue_y = code_y + code_h + 10
-    queue_w = code_w * 3 // 5 - 5
-    queue_h = int(img_h * 0.18)
+    left_x = 16
+    left_w = question_w
+
+    # Queue + Stats sit side-by-side below the question, above the grid
+    queue_x = left_x
+    queue_y = question_y + question_h + 10
+    queue_w = left_w * 3 // 5 - 5
+    queue_h = 105
 
     stats_x = queue_x + queue_w + 10
     stats_y = queue_y
-    stats_w = code_w - queue_w - 10
+    stats_w = left_w - queue_w - 10
     stats_h = queue_h
 
-    wave_x = 16
-    wave_y = grid_panel_y + grid_panel_h + 16
-    wave_w = img_w - 32
-    wave_h = 70
+    grid_panel_x = left_x
+    grid_panel_y = queue_y + queue_h + 10
+    grid_panel_w = left_w
+    grid_panel_h = img_h - grid_panel_y - 78  # leave room for legend
+
+    code_x = left_x + left_w + 16
+    code_y = 130
+    code_w = img_w - code_x - 16
+    code_h = img_h - 130 - 78               # full height minus legend
 
     legend_x = 16
-    legend_y = wave_y + wave_h + 10
+    legend_y = img_h - 70
     legend_w = img_w - 32
-    legend_h = img_h - legend_y - 10
+    legend_h = 62
+
+    # ── Draw Question Panel ──
+    draw_question_panel(draw, question_x, question_y, question_w, question_h,
+                        font_xs, font_xs)
+
+    # ── Draw Queue Panel ──
+    draw_queue_panel(draw, queue_x, queue_y, queue_w, queue_h,
+                     frame_data["queue"], font_sm, font_xs)
+
+    # ── Draw Stats Panel ──
+    minutes = frame_data["variables"].get("minutes", 0)
+    fresh = frame_data["fresh"]
+    result = frame_data["variables"].get("result", "—")
+    stats = [
+        ("Minute", minutes, CYAN),
+        ("Fresh",  fresh,   YELLOW if fresh > 0 else GREEN),
+        ("Queue",  len(frame_data["queue"]), ORANGE),
+        ("Answer", result,  GREEN if result != "—" else GRAY),
+    ]
+    draw_stats_panel(draw, stats_x, stats_y, stats_w, stats_h,
+                     stats, font_md, font_sm)
 
     # ── Draw Grid Panel ──
     draw_rounded_rect(draw, (grid_panel_x, grid_panel_y,
@@ -513,9 +756,20 @@ def render_frame_image(frame_data, frame_idx, total_frames,
                 cy = gy0 + r * (cell_size + cell_gap)
                 state = grid[r][c]
                 is_highlight = (r, c) in highlight
+
+                p_state = prev_grid[r][c] if prev_grid else None
+                cell_t  = tween_t if (p_state is not None and p_state != state) else 0.0
+
                 draw_cell(draw, cx, cy, cell_size, state,
-                         font_sm, font_xs,
-                         wave_ring=is_highlight)
+                          font_sm, font_xs,
+                          wave_ring=is_highlight and tween_t == 0,
+                          anim_t=cell_t, prev_state=p_state)
+
+                # Particle burst on infection
+                if cell_t > 0 and p_state == FRESH and state in (JUST_ROTTEN, ROTTEN):
+                    ccx = cx + cell_size // 2
+                    ccy = cy + cell_size // 2
+                    draw_particles(draw, ccx, ccy, cell_size, tween_t)
 
         # Row/col labels
         for r in range(rows):
@@ -527,31 +781,8 @@ def render_frame_image(frame_data, frame_idx, total_frames,
 
     # ── Draw Code Panel ──
     draw_code_panel(draw, code_x, code_y, code_w, code_h,
-                    frame_data["source"], frame_data["line"], font_code, font_xs)
-
-    # ── Draw Queue Panel ──
-    draw_queue_panel(draw, queue_x, queue_y, queue_w, queue_h,
-                     frame_data["queue"], font_sm, font_xs)
-
-    # ── Draw Stats Panel ──
-    minutes = frame_data["variables"].get("minutes", 0)
-    fresh = frame_data["fresh"]
-    result = frame_data["variables"].get("result", "—")
-    stats = [
-        ("Minute", minutes, CYAN),
-        ("Fresh", fresh, YELLOW if fresh > 0 else GREEN),
-        ("Queue", len(frame_data["queue"]), ORANGE),
-        ("Answer", result, GREEN if result != "—" else GRAY),
-    ]
-    draw_stats_panel(draw, stats_x, stats_y, stats_w, stats_h,
-                     stats, font_md, font_sm)
-
-    # ── Draw Wave Progress Bar ──
-    remaining = frame_data["fresh"]
-    # Estimate max minutes for bar width (rough upper bound)
-    max_min = max(minutes + 2, rows + cols)
-    draw_wave_bar(draw, wave_x, wave_y, wave_w, wave_h,
-                  minutes, max_min, total_fresh_start, remaining, font_xs)
+                    frame_data["source"], frame_data["line"], font_code, font_xs,
+                    prev_line=prev_line, tween_t=tween_t)
 
     # ── Legend ──
     if legend_h > 20:
@@ -570,35 +801,100 @@ def render_frame_image(frame_data, frame_idx, total_frames,
             draw.text((lx + 24, ly + 1), label, fill=GRAY, font=font_xs)
             lx += 170
 
-    return img
+    return apply_scanlines(img)
+
+
+# ═══════════════════════════════════════════════════
+#  TIMING — Per-frame duration
+# ═══════════════════════════════════════════════════
+
+def frame_duration(frame_data):
+    """Return how many seconds this frame should stay on screen."""
+    desc = frame_data["desc"].lower()
+    if any(x in desc for x in ["all oranges rotten", "impossible", "answer"]):
+        return 3.5   # final result — let it land
+    elif "begins" in desc:
+        return 2.0   # wave start — key moment
+    elif "complete" in desc:
+        return 1.5   # end of a wave
+    elif "infected" in desc:
+        return 1.0   # each infection event
+    elif "scanning" in desc or "found" in desc:
+        return 1.2   # init
+    else:
+        return 0.8   # default
 
 
 # ═══════════════════════════════════════════════════
 #  MAIN — Generate MP4
 # ═══════════════════════════════════════════════════
 
-def generate_video(grid, output="lc994_viz.mp4", fps=1.5,
-                   img_w=1920, img_h=1080):
-    """Generate the full visualization video."""
-    # Count initial fresh
-    total_fresh_start = sum(1 for row in grid for c in row if c == 1)
+N_TWEEN = 10   # animation frames per state transition
 
-    frames = list(simulate(grid))
-    total = len(frames)
-    print(f"Simulated {total} frames")
+
+def generate_video(grid, output="lc994_viz.mp4",
+                   problem_desc="LC 994 · Rotting Oranges · Medium  |  BFS wave propagation on a grid",
+                   img_w=1920, img_h=1080):
+    """Generate video with smooth tween animation between state changes."""
+    total_fresh_start = sum(1 for row in grid for c in row if c == 1)
+    snapshots = list(simulate(grid))
+    print(f"Simulated {len(snapshots)} key frames")
 
     with tempfile.TemporaryDirectory() as tmp:
-        for i, fdata in enumerate(frames):
-            img = render_frame_image(fdata, i, total, grid, total_fresh_start,
-                                     img_w, img_h)
-            img.save(os.path.join(tmp, f"frame_{i:05d}.png"))
-            print(f"  rendered {i+1}/{total}", end="\r", flush=True)
+        png_idx   = 0
+        manifest  = os.path.join(tmp, "frames.txt")
 
-        print(f"\nStitching {total} frames → {output}")
+        def save(img, duration):
+            nonlocal png_idx
+            path = os.path.join(tmp, f"f_{png_idx:06d}.png")
+            img.save(path)
+            with open(manifest, "a") as mf:
+                mf.write(f"file 'f_{png_idx:06d}.png'\nduration {duration:.4f}\n")
+            png_idx += 1
+
+        for i, curr in enumerate(snapshots):
+            prev = snapshots[i - 1] if i > 0 else None
+
+            # ── Tween: animate cells that changed since last snapshot ──
+            if prev is not None:
+                pg = prev["grid"]
+                cg = curr["grid"]
+                has_change = any(
+                    pg[r][c] != cg[r][c]
+                    for r in range(len(cg)) for c in range(len(cg[r]))
+                )
+                if has_change:
+                    for f in range(N_TWEEN):
+                        t = ease_in_out(f / N_TWEEN)
+                        img = render_frame_image(
+                            curr, i, len(snapshots), grid, total_fresh_start,
+                            problem_desc, img_w, img_h,
+                            prev_grid=pg, tween_t=t,
+                            prev_line=prev["line"],
+                        )
+                        save(img, 1 / 30)
+
+            # ── Hold frame ──
+            img = render_frame_image(
+                curr, i, len(snapshots), grid, total_fresh_start,
+                problem_desc, img_w, img_h,
+            )
+            hold = frame_duration(curr)
+            save(img, hold)
+
+            print(f"  snapshot {i+1}/{len(snapshots)}  ({png_idx} PNGs)", end="\r", flush=True)
+
+        # ffmpeg concat needs last file listed twice
+        last = os.path.join(tmp, f"f_{png_idx-1:06d}.png")
+        with open(manifest, "a") as mf:
+            mf.write(f"file '{last}'\n")
+
+        print(f"\nStitching {png_idx} PNGs → {output}")
         cmd = [
             "ffmpeg", "-y",
-            "-framerate", str(fps),
-            "-i", os.path.join(tmp, "frame_%05d.png"),
+            "-f", "concat", "-safe", "0",
+            "-i", manifest,
+            "-vf", "fps=30",
             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
             output,
         ]
@@ -618,7 +914,6 @@ if __name__ == "__main__":
               [1, 1, 0],
               [0, 1, 1]],
         output="videos/lc994_ex1.mp4",
-        fps=1.2,
     )
 
     # Example 2: Impossible case
@@ -630,7 +925,6 @@ if __name__ == "__main__":
               [0, 1, 1],
               [1, 0, 1]],
         output="videos/lc994_ex2.mp4",
-        fps=1.2,
     )
 
     # Example 3: Bigger grid, multiple rotten sources
@@ -643,5 +937,4 @@ if __name__ == "__main__":
               [1, 0, 1, 1, 1],
               [1, 1, 1, 1, 2]],
         output="videos/lc994_ex3.mp4",
-        fps=1.0,
     )
