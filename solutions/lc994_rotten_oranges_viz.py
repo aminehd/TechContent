@@ -418,27 +418,43 @@ def draw_stats_panel(draw, x, y, w, h, stats, font, font_sm):
 #  QUESTION PANEL
 # ═══════════════════════════════════════════════════
 
-QUESTION_LINES = [
-    "Given an m×n grid where each cell is:",
-    "  0 = empty  |  1 = fresh orange  |  2 = rotten orange",
-    "",
-    "Every minute, any fresh orange 4-directionally",
-    "adjacent to a rotten one becomes rotten.",
-    "",
-    "Return the minimum number of minutes until no",
-    "fresh orange remains, or -1 if impossible.",
-]
+QUESTION_TEXT = (
+    "You are given an m×n grid of cells. Each cell holds one of three values: "
+    "0 (empty slot), 1 (a fresh orange), or 2 (a rotten orange). "
+    "Every minute, any fresh orange that is 4-directionally adjacent "
+    "to a rotten orange becomes rotten itself — the rot spreads like a wave. "
+    "Your goal: find the minimum number of minutes until no fresh orange remains. "
+    "If some fresh oranges can never be reached, return -1."
+)
 
 def draw_question_panel(draw, x, y, w, h, font, font_sm):
     draw_rounded_rect(draw, (x, y, x+w, y+h), 8, BG_PANEL, GRID_LINE, 1)
-    draw.text((x + 10, y + 6), "PROBLEM", fill=CYAN, font=font_sm)
-    qy = y + 28
-    line_h = 18
-    for line in QUESTION_LINES:
-        if qy + line_h > y + h - 4:
+    draw.text((x + 12, y + 8), "PROBLEM", fill=CYAN, font=font_sm)
+
+    # Word-wrap the paragraph to fit panel width
+    max_px   = w - 24
+    words    = QUESTION_TEXT.split()
+    lines    = []
+    current  = ""
+    for word in words:
+        test = (current + " " + word).strip()
+        bb   = draw.textbbox((0, 0), test, font=font)
+        if bb[2] - bb[0] <= max_px:
+            current = test
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+
+    ty     = y + 30
+    line_h = 22
+    for line in lines:
+        if ty + line_h > y + h - 4:
             break
-        draw.text((x + 12, qy), line, fill=(160, 180, 160), font=font)
-        qy += line_h
+        draw.text((x + 12, ty), line, fill=(185, 210, 185), font=font)
+        ty += line_h
 
 
 # ═══════════════════════════════════════════════════
@@ -679,7 +695,7 @@ def render_frame_image(frame_data, frame_idx, total_frames,
     question_x = 16
     question_y = 130
     question_w = int(img_w * 0.45)
-    question_h = 110
+    question_h = 145
 
     left_x = 16
     left_w = question_w
@@ -712,7 +728,7 @@ def render_frame_image(frame_data, frame_idx, total_frames,
 
     # ── Draw Question Panel ──
     draw_question_panel(draw, question_x, question_y, question_w, question_h,
-                        font_xs, font_xs)
+                        font_sm, font_xs)
 
     # ── Draw Queue Panel ──
     draw_queue_panel(draw, queue_x, queue_y, queue_w, queue_h,
