@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Credentials — never commit
+infra/pipeline/client_secrets.json
+infra/pipeline/.token.json
+
+# Heavy video renders — store in GCS instead
+videos/*_final.mp4
+videos/lc*_ex*.mp4
+
+# OS
+.DS_Store

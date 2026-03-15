@@ -3,9 +3,8 @@ produce.py — YouTube production pipeline for LC-Viz
 
 Usage:
   python infra/pipeline/produce.py lc200
-  python infra/pipeline/produce.py lc994 --music path/to/track.mp3
-  python infra/pipeline/produce.py lc102 --output videos/lc102_final.mp4
-  python infra/pipeline/produce.py series994 --music track.mp3   # full BFS series
+  python infra/pipeline/produce.py lc994 --music assets/music/lofi-dark.mp3
+  python infra/pipeline/produce.py series994 --music assets/music/lofi-dark.mp3
 
 Produces one upload-ready MP4: intro → examples → outro, with optional background music.
 """
@@ -13,7 +12,6 @@ Produces one upload-ready MP4: intro → examples → outro, with optional backg
 import argparse
 import math
 import os
-import random
 import subprocess
 import tempfile
 from pathlib import Path
@@ -24,90 +22,65 @@ from PIL import Image, ImageDraw, ImageFont
 # Config
 # ---------------------------------------------------------------------------
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT   = Path(__file__).resolve().parents[2]
 VIDEOS = ROOT / "videos"
-FONTS = ROOT / "viz_framework" / "fonts"
+FONTS  = ROOT / "viz_framework" / "fonts"
 
-# Per-problem config
 PROBLEMS = {
     "lc102": {
-        "title": "LC 102",
-        "subtitle": "Binary Tree Level Order Traversal",
-        "difficulty": "Medium",
-        "pattern": ["BFS", "Tree", "Queue"],
-        "accent": (0, 230, 230),       # CYAN
-        "examples": [
-            VIDEOS / "lc102_ex1.mp4",
-            VIDEOS / "lc102_ex2.mp4",
-        ],
+        "title":    "LC 102 · Binary Tree Level Order",
+        "accent":   (0, 230, 230),
+        "examples": [VIDEOS / "lc102_ex1.mp4", VIDEOS / "lc102_ex2.mp4"],
     },
     "lc200": {
-        "title": "LC 200",
-        "subtitle": "Number of Islands",
-        "difficulty": "Medium",
-        "pattern": ["BFS", "Grid", "DFS"],
-        "accent": (50, 220, 100),       # GREEN
-        "examples": [
-            VIDEOS / "lc200_ex1.mp4",
-            VIDEOS / "lc200_ex2.mp4",
-        ],
+        "title":    "LC 200 · Number of Islands",
+        "accent":   (50, 220, 100),
+        "examples": [VIDEOS / "lc200_ex1.mp4", VIDEOS / "lc200_ex2.mp4"],
     },
     "lc994": {
-        "title": "LC 994",
-        "subtitle": "Rotting Oranges",
-        "difficulty": "Medium",
-        "pattern": ["BFS", "Grid", "Multi-source"],
-        "accent": (255, 140, 30),       # ORANGE
-        "examples": [
-            VIDEOS / "lc994_ex1.mp4",
-            VIDEOS / "lc994_ex2.mp4",
-            VIDEOS / "lc994_ex3.mp4",
-        ],
+        "title":    "LC 994 · Rotting Oranges",
+        "accent":   (255, 140, 30),
+        "examples": [VIDEOS / "lc994_ex1.mp4", VIDEOS / "lc994_ex2.mp4", VIDEOS / "lc994_ex3.mp4"],
     },
-    # Full BFS series: lc102 → lc200 → lc994
     "series994": {
-        "title": "BFS Series",
-        "subtitle": "Tree → Islands → Rotting Oranges",
-        "difficulty": "Medium",
-        "pattern": ["BFS", "Grid", "Tree"],
-        "accent": (180, 80, 255),       # PURPLE
+        "title":    "BFS · Tree → Islands → Rotting Oranges",
+        "accent":   (180, 80, 255),
         "examples": [
-            VIDEOS / "lc102_ex1.mp4",
-            VIDEOS / "lc102_ex2.mp4",
-            VIDEOS / "lc200_ex1.mp4",
-            VIDEOS / "lc200_ex2.mp4",
-            VIDEOS / "lc994_ex1.mp4",
-            VIDEOS / "lc994_ex2.mp4",
-            VIDEOS / "lc994_ex3.mp4",
+            VIDEOS / "lc102_ex1.mp4", VIDEOS / "lc102_ex2.mp4",
+            VIDEOS / "lc200_ex1.mp4", VIDEOS / "lc200_ex2.mp4",
+            VIDEOS / "lc994_ex1.mp4", VIDEOS / "lc994_ex2.mp4", VIDEOS / "lc994_ex3.mp4",
         ],
     },
 }
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-W, H = 1920, 1080
+W, H   = 1920, 1080
 BG     = (8, 10, 18)
-GRAY   = (80, 90, 110)
 WHITE  = (230, 235, 245)
-DIM    = (50, 55, 70)
+GRAY   = (80, 90, 110)
 FPS    = 30
 
-CHANNEL = "aminehdadsetan"
-GITHUB  = "github.com/aminehdadsetan/Viz"
+CHANNEL = "algoviz1000"
+GITHUB  = "github.com/algoviz1000/Viz"
+
+ASSETS = ROOT / "assets"
 
 
 # ---------------------------------------------------------------------------
-# Font helpers
+# Helpers
 # ---------------------------------------------------------------------------
 
-def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
-    """Load a monospace font, fall back to default."""
+def _font_pixel(size):
+    """Press Start 2P — pixel arcade font."""
+    p = ASSETS / "fonts" / "PressStart2P.ttf"
+    if p.exists():
+        return ImageFont.truetype(str(p), size)
+    return ImageFont.load_default()
+
+def _font(size, bold=False):
     candidates = [
         FONTS / ("JetBrainsMono-Bold.ttf" if bold else "JetBrainsMono-Regular.ttf"),
-        Path("/System/Library/Fonts/Supplemental/CourierNewBold.ttf") if bold else None,
-        Path("/System/Library/Fonts/Supplemental/CourierNew.ttf"),
+        Path("/System/Library/Fonts/Supplemental/Courier New Bold.ttf") if bold else None,
+        Path("/System/Library/Fonts/Supplemental/Courier New.ttf"),
         Path("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
     ]
     for p in candidates:
@@ -115,470 +88,251 @@ def _font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
             return ImageFont.truetype(str(p), size)
     return ImageFont.load_default()
 
+def lerp(a, b, t):      return a + (b - a) * t
+def lerp_c(c1, c2, t):  return tuple(int(lerp(a, b, t)) for a, b in zip(c1, c2))
+def ease_out(t):         return 1 - (1 - t) ** 3
+def ease_io(t):          return t * t * (3 - 2 * t)
 
-# ---------------------------------------------------------------------------
-# Drawing utilities
-# ---------------------------------------------------------------------------
-
-def lerp(a, b, t):
-    return a + (b - a) * t
-
-def lerp_color(c1, c2, t):
-    return tuple(int(lerp(a, b, t)) for a, b in zip(c1, c2))
-
-def ease_in_out(t):
-    return t * t * (3 - 2 * t)
-
-def ease_out_cubic(t):
-    return 1 - (1 - t) ** 3
-
-
-def neon_rect(draw: ImageDraw.Draw, x, y, w, h, color, layers=6, radius=12):
-    """Draw a glowing neon rectangle."""
-    for i in range(layers, 0, -1):
-        alpha = 0.08 * i
-        c = lerp_color(BG, color, alpha)
-        pad = i * 3
-        draw.rounded_rectangle(
-            [x - pad, y - pad, x + w + pad, y + h + pad],
-            radius=radius + pad // 2,
-            outline=c,
-            width=1,
-        )
-    draw.rounded_rectangle([x, y, x + w, y + h], radius=radius, outline=color, width=2)
-
-
-def scanlines(img: Image.Image) -> Image.Image:
-    """Overlay CRT scanlines."""
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(overlay)
+def scanlines(img):
+    ov = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    d  = ImageDraw.Draw(ov)
     for y in range(0, img.height, 3):
         d.line([(0, y), (img.width, y)], fill=(0, 0, 0, 35))
     base = img.convert("RGBA")
-    base.alpha_composite(overlay)
+    base.alpha_composite(ov)
     return base.convert("RGB")
 
+def text_center(draw, text, font, y, color):
+    try:
+        bb = draw.textbbox((0, 0), text, font=font)
+        w  = bb[2] - bb[0]
+    except Exception:
+        w = len(text) * (font.size // 2 + 2)
+    draw.text(((W - w) // 2, y), text, font=font, fill=color)
 
-def vignette(img: Image.Image, strength=0.55) -> Image.Image:
-    """Darken corners."""
-    vig = Image.new("L", img.size, 0)
-    d = ImageDraw.Draw(vig)
-    cx, cy = img.width // 2, img.height // 2
-    for i in range(80):
-        t = i / 80
-        alpha = int(255 * strength * (1 - ease_out_cubic(t)))
-        pad = int(i * (max(img.width, img.height) / 80))
-        d.rectangle([pad, pad, img.width - pad, img.height - pad], fill=255 - alpha)
-    r, g, b = img.split()
-    dark = Image.new("RGB", img.size, (0, 0, 0))
-    return Image.composite(dark, img, ImageOps_invert_L(vig))
-
-
-# PIL doesn't have ImageOps here without import, keep it simple:
-def _apply_vignette(img: Image.Image) -> Image.Image:
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(overlay)
-    cx, cy = img.width // 2, img.height // 2
-    # draw dark edges
-    for i in range(60):
-        t = ease_out_cubic(i / 60)
-        alpha = int(80 * (1 - t))
-        pad = i * 8
-        d.rectangle([pad, pad, img.width - pad, img.height - pad], fill=(0, 0, 0, 0))
-    # simple corner darken via rounded rect outside
-    corner_alpha = 90
-    for pad in range(0, 180, 20):
-        a = int(corner_alpha * (1 - pad / 180))
-        d.rounded_rectangle(
-            [pad, pad, img.width - pad, img.height - pad],
-            radius=max(1, 300 - pad * 2),
-            outline=(0, 0, 0, a),
-            width=20,
-        )
-    base = img.convert("RGBA")
-    base.alpha_composite(overlay)
-    return base.convert("RGB")
-
-
-def grid_bg(draw: ImageDraw.Draw, accent):
-    """Faint grid lines in accent color."""
-    gc = lerp_color(BG, accent, 0.04)
-    for x in range(0, W, 80):
-        draw.line([(x, 0), (x, H)], fill=gc, width=1)
-    for y in range(0, H, 80):
-        draw.line([(0, y), (W, y)], fill=gc, width=1)
-
-
-def scanner_line(draw: ImageDraw.Draw, t: float, accent):
-    """Horizontal scanner sweep (0→1)."""
-    y = int(H * ease_in_out(t))
-    beam_color = lerp_color(BG, accent, 0.6)
-    for dy in range(-8, 9):
-        alpha = max(0, 1 - abs(dy) / 8)
-        c = lerp_color(BG, beam_color, alpha * 0.9)
-        draw.line([(0, y + dy), (W, y + dy)], fill=c, width=1)
+def neon_text(draw, text, font, y, color, alpha=1.0):
+    """Draw text with neon glow."""
+    try:
+        bb = draw.textbbox((0, 0), text, font=font)
+        tw = bb[2] - bb[0]
+    except Exception:
+        tw = len(text) * (font.size // 2 + 2)
+    x = (W - tw) // 2
+    for gl in range(8, 0, -1):
+        gc = lerp_c(BG, color, 0.06 * gl * alpha)
+        draw.text((x - gl, y - gl), text, font=font, fill=gc)
+    draw.text((x, y), text, font=font, fill=lerp_c(BG, color, alpha))
 
 
 # ---------------------------------------------------------------------------
-# Card generators
+# Card generators — return list of PIL Images
 # ---------------------------------------------------------------------------
 
-def make_intro_frames(cfg: dict, n_frames: int) -> list[Image.Image]:
+def make_intro(cfg, n_frames):
     """
-    5-second animated intro card.
-    Phases:
-      0.0-0.3 — scanner sweep
-      0.2-0.6 — grid fade in
-      0.4-0.8 — title fade + slide up
-      0.6-0.9 — subtitle + badges
-      0.8-1.0 — final hold with pulse
+    5 seconds. Pixel font title — large, centered, neon glow, scanlines.
+    Title split into two lines if it has ' · '.
     """
+    title  = cfg["title"]
     accent = cfg["accent"]
-    font_title  = _font(96, bold=True)
-    font_sub    = _font(40)
-    font_badge  = _font(28, bold=True)
-    font_small  = _font(22)
-    frames = []
+
+    # Split on · for two-line layout
+    if " · " in title:
+        line1, line2 = title.split(" · ", 1)
+    else:
+        line1, line2 = title, None
+
+    # Auto-scale title to fill ~80% of screen width
+    target_w = int(W * 0.80)
+    size = 120
+    while size > 20:
+        f_test = _font_pixel(size)
+        try:
+            bb = ImageDraw.Draw(Image.new("RGB", (1, 1))).textbbox((0, 0), line1, font=f_test)
+            if bb[2] - bb[0] <= target_w:
+                break
+        except Exception:
+            break
+        size -= 4
+    f_title = _font_pixel(size)
+    f_sub   = _font_pixel(max(16, size // 3))
+    f_chan  = _font_pixel(max(14, size // 6))
+    frames  = []
 
     for fi in range(n_frames):
-        t = fi / (n_frames - 1)
+        t   = fi / max(1, n_frames - 1)
+        img = Image.new("RGB", (W, H), BG)
+        d   = ImageDraw.Draw(img)
 
-        img  = Image.new("RGB", (W, H), BG)
-        draw = ImageDraw.Draw(img)
+        # Faint grid
+        gc = lerp_c(BG, accent, 0.05)
+        for x in range(0, W, 80): d.line([(x, 0), (x, H)], fill=gc)
+        for y in range(0, H, 80): d.line([(0, y), (W, y)], fill=gc)
 
-        # Grid background
-        grid_t = max(0, min(1, (t - 0.2) / 0.4))
-        if grid_t > 0:
-            gc = lerp_color(BG, lerp_color(BG, accent, 0.06), grid_t)
-            for x in range(0, W, 80):
-                draw.line([(x, 0), (x, H)], fill=gc, width=1)
-            for y in range(0, H, 80):
-                draw.line([(0, y), (W, y)], fill=gc, width=1)
+        # Corner lines grow in
+        ca  = ease_out(min(1, t / 0.35))
+        cl  = lerp_c(BG, accent, 0.7 * ca)
+        ln  = int(200 * ca)
+        d.line([(0, 0), (ln, 0)],     fill=cl, width=3)
+        d.line([(0, 0), (0, ln)],     fill=cl, width=3)
+        d.line([(W, H), (W-ln, H)],   fill=cl, width=3)
+        d.line([(W, H), (W, H-ln)],   fill=cl, width=3)
 
-        # Scanner sweep (first 40% of time)
-        if t < 0.4:
-            scanner_line(draw, t / 0.4, accent)
-
-        # Corner accent lines
-        corner_t = max(0, min(1, (t - 0.3) / 0.3))
-        if corner_t > 0:
-            length = int(200 * corner_t)
-            lc = lerp_color(BG, accent, 0.7 * corner_t)
-            draw.line([(0, 0), (length, 0)], fill=lc, width=2)
-            draw.line([(0, 0), (0, length)], fill=lc, width=2)
-            draw.line([(W, H), (W - length, H)], fill=lc, width=2)
-            draw.line([(W, H), (W, H - length)], fill=lc, width=2)
-
-        # Center Y base
-        cy = H // 2
-
-        # Title
-        title_t = max(0, min(1, (t - 0.35) / 0.35))
+        # Title fade + slide up
+        title_t = ease_out(min(1, max(0, (t - 0.2) / 0.45)))
         if title_t > 0:
-            title_et = ease_out_cubic(title_t)
-            title_y  = int(lerp(cy - 30, cy - 80, title_et))
-            title_alpha = title_et
-            tc = lerp_color(BG, accent, title_alpha)
-            # Neon glow behind title
-            try:
-                bbox = draw.textbbox((0, 0), cfg["title"], font=font_title)
-                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            except Exception:
-                tw, th = len(cfg["title"]) * 58, 96
-            tx = (W - tw) // 2
-            for gl in range(8, 0, -1):
-                gc2 = lerp_color(BG, accent, 0.06 * gl * title_alpha)
-                draw.text((tx - gl, title_y - gl), cfg["title"], font=font_title, fill=gc2)
-            draw.text((tx, title_y), cfg["title"], font=font_title, fill=tc)
-
-        # Subtitle
-        sub_t = max(0, min(1, (t - 0.55) / 0.3))
-        if sub_t > 0:
-            sub_et = ease_out_cubic(sub_t)
-            sub_y  = int(lerp(cy + 60, cy + 20, sub_et))
-            sc = lerp_color(BG, WHITE, sub_et * 0.85)
-            try:
-                bbox = draw.textbbox((0, 0), cfg["subtitle"], font=font_sub)
-                sw = bbox[2] - bbox[0]
-            except Exception:
-                sw = len(cfg["subtitle"]) * 24
-            draw.text(((W - sw) // 2, sub_y), cfg["subtitle"], font=font_sub, fill=sc)
-
-        # Difficulty badge + pattern tags
-        badge_t = max(0, min(1, (t - 0.65) / 0.3))
-        if badge_t > 0:
-            badge_et = ease_out_cubic(badge_t)
-            badge_y  = cy + 90
-
-            DIFF_COLORS = {
-                "Easy":   (50, 200, 80),
-                "Medium": (255, 180, 30),
-                "Hard":   (255, 70, 70),
-            }
-            diff_color = DIFF_COLORS.get(cfg["difficulty"], WHITE)
-            diff_color = lerp_color(BG, diff_color, badge_et)
-
-            # Build all badges: [difficulty] + patterns
-            tags = [cfg["difficulty"]] + cfg["pattern"]
-            tag_colors = [diff_color] + [lerp_color(BG, accent, 0.8 * badge_et)] * len(cfg["pattern"])
-
-            # Measure total width
-            pad_x, pad_y = 18, 8
-            tag_sizes = []
-            for tag in tags:
+            if line2:
                 try:
-                    bb = draw.textbbox((0, 0), tag, font=font_badge)
-                    tw2 = bb[2] - bb[0]
+                    bb1 = d.textbbox((0, 0), line1, font=f_title)
+                    title_h = bb1[3] - bb1[1]
                 except Exception:
-                    tw2 = len(tag) * 17
-                tag_sizes.append(tw2)
+                    title_h = size
+                # center the two-line block vertically
+                gap = 40
+                block_h = title_h + gap + f_sub.size
+                cy = (H - block_h) // 2
+                neon_text(d, line1, f_title, cy, accent, title_t)
+                sub_t = ease_out(min(1, max(0, (t - 0.45) / 0.35)))
+                if sub_t > 0:
+                    neon_text(d, line2, f_sub, cy + title_h + gap, accent, sub_t * 0.75)
+            else:
+                cy = int(lerp(H // 2 + 20, H // 2 - 30, title_t))
+                neon_text(d, line1, f_title, cy, accent, title_t)
 
-            total_w = sum(s + pad_x * 2 for s in tag_sizes) + 16 * (len(tags) - 1)
-            bx = (W - total_w) // 2
+        # Blinking cursor after title settles
+        if t > 0.7:
+            blink = int((t - 0.7) / 0.1) % 2 == 0
+            if blink:
+                bc = lerp_c(BG, accent, 0.8)
+                # find title right edge to place cursor
+                try:
+                    bb = d.textbbox((0, 0), line1, font=f_title)
+                    tw = bb[2] - bb[0]
+                except Exception:
+                    tw = len(line1) * 32
+                cx2 = (W + tw) // 2 + 10
+                cy2 = (H // 2 - 40) if line2 else (H // 2 - 30)
+                d.rectangle([cx2, cy2 + 8, cx2 + 6, cy2 + 56], fill=bc)
 
-            for i, (tag, color, ts) in enumerate(zip(tags, tag_colors, tag_sizes)):
-                bw = ts + pad_x * 2
-                bh = 46
-                neon_rect(draw, bx, badge_y, bw, bh, color, layers=4, radius=8)
-                tc2 = lerp_color(BG, WHITE, badge_et * 0.9)
-                draw.text((bx + pad_x, badge_y + pad_y + 2), tag, font=font_badge, fill=tc2)
-                bx += bw + 16
+        # Channel bottom
+        if t > 0.8:
+            cc = lerp_c(BG, GRAY, ease_out((t - 0.8) / 0.2))
+            text_center(d, f"@{CHANNEL}", f_chan, H - 70, cc)
 
-        # Bottom channel name
-        ch_t = max(0, min(1, (t - 0.8) / 0.2))
-        if ch_t > 0:
-            cc = lerp_color(BG, GRAY, ch_t)
-            ch_text = f"@{CHANNEL}"
-            try:
-                bb = draw.textbbox((0, 0), ch_text, font=font_small)
-                chw = bb[2] - bb[0]
-            except Exception:
-                chw = len(ch_text) * 13
-            draw.text(((W - chw) // 2, H - 60), ch_text, font=font_small, fill=cc)
-
-        # Pulse on accent line at bottom of title area
-        if t > 0.75:
-            pulse_t = (t - 0.75) / 0.25
-            pulse_alpha = 0.4 + 0.3 * math.sin(pulse_t * math.pi * 3)
-            lc2 = lerp_color(BG, accent, pulse_alpha)
-            line_w = int(lerp(0, 400, ease_out_cubic(min(1, (t - 0.75) / 0.15))))
-            lx = (W - line_w) // 2
-            draw.line([(lx, cy - 20), (lx + line_w, cy - 20)], fill=lc2, width=2)
-
-        img = scanlines(img)
-        frames.append(img)
-
+        frames.append(scanlines(img))
     return frames
 
 
-def make_transition_frames(label: str, accent, n_frames: int) -> list[Image.Image]:
-    """
-    2-second "Example N" transition card.
-    Quick flash with label centered.
-    """
-    font_label = _font(72, bold=True)
+def make_outro(n_frames):
+    accent = (180, 80, 255)
+    f_big  = _font_pixel(42)
+    f_med  = _font_pixel(22)
+    f_sm   = _font_pixel(14)
     frames = []
 
     for fi in range(n_frames):
-        t = fi / max(1, n_frames - 1)
-        # fade in 0→0.3, hold, fade out 0.7→1.0
-        if t < 0.3:
-            alpha = ease_out_cubic(t / 0.3)
-        elif t > 0.7:
-            alpha = ease_out_cubic((1 - t) / 0.3)
-        else:
-            alpha = 1.0
+        t   = fi / max(1, n_frames - 1)
+        img = Image.new("RGB", (W, H), BG)
+        d   = ImageDraw.Draw(img)
 
-        img  = Image.new("RGB", (W, H), BG)
-        draw = ImageDraw.Draw(img)
+        gc = lerp_c(BG, accent, 0.05)
+        for x in range(0, W, 80): d.line([(x, 0), (x, H)], fill=gc)
+        for y in range(0, H, 80): d.line([(0, y), (W, y)], fill=gc)
 
-        grid_bg(draw, accent)
+        a1 = ease_out(min(1, t / 0.4))
+        neon_text(d, f"@{CHANNEL}", f_big, H // 2 - 60, accent, a1)
 
-        lc2 = lerp_color(BG, accent, 0.7 * alpha)
-        try:
-            bb = draw.textbbox((0, 0), label, font=font_label)
-            lw = bb[2] - bb[0]
-            lh = bb[3] - bb[1]
-        except Exception:
-            lw, lh = len(label) * 43, 72
+        if t > 0.3:
+            a2 = ease_out(min(1, (t - 0.3) / 0.35))
+            text_center(d, GITHUB, f_med, H // 2 + 20, lerp_c(BG, WHITE, 0.7 * a2))
 
-        lx = (W - lw) // 2
-        ly = (H - lh) // 2
+        if t > 0.6:
+            a3 = ease_out(min(1, (t - 0.6) / 0.35))
+            text_center(d, "Subscribe  ·  More breakdowns coming", f_sm,
+                        H // 2 + 90, lerp_c(BG, GRAY, a3))
 
-        # Glow
-        for gl in range(6, 0, -1):
-            gc3 = lerp_color(BG, accent, 0.06 * gl * alpha)
-            draw.text((lx - gl * 2, ly - gl * 2), label, font=font_label, fill=gc3)
-
-        draw.text((lx, ly), label, font=font_label, fill=lc2)
-
-        # Horizontal line above/below
-        line_c = lerp_color(BG, accent, 0.4 * alpha)
-        draw.line([(W // 4, ly - 20), (3 * W // 4, ly - 20)], fill=line_c, width=1)
-        draw.line([(W // 4, ly + lh + 20), (3 * W // 4, ly + lh + 20)], fill=line_c, width=1)
-
-        img = scanlines(img)
-        frames.append(img)
-
-    return frames
-
-
-def make_outro_frames(n_frames: int) -> list[Image.Image]:
-    """
-    3-second outro card.
-    Channel name + GitHub + subscribe prompt.
-    """
-    accent = (180, 80, 255)  # purple
-    font_big   = _font(72, bold=True)
-    font_med   = _font(38)
-    font_small = _font(26)
-    frames = []
-
-    for fi in range(n_frames):
-        t = fi / max(1, n_frames - 1)
-        alpha = ease_out_cubic(min(1, t / 0.4)) if t < 0.4 else 1.0
-
-        img  = Image.new("RGB", (W, H), BG)
-        draw = ImageDraw.Draw(img)
-        grid_bg(draw, accent)
-
-        cy = H // 2
-
-        # Main channel name
-        main_text = f"@{CHANNEL}"
-        ac = lerp_color(BG, accent, alpha)
-        try:
-            bb = draw.textbbox((0, 0), main_text, font=font_big)
-            mw = bb[2] - bb[0]
-        except Exception:
-            mw = len(main_text) * 43
-        mx = (W - mw) // 2
-        for gl in range(7, 0, -1):
-            gc4 = lerp_color(BG, accent, 0.07 * gl * alpha)
-            draw.text((mx - gl, cy - 50 - gl), main_text, font=font_big, fill=gc4)
-        draw.text((mx, cy - 50), main_text, font=font_big, fill=ac)
-
-        # GitHub
-        gh_t = max(0, min(1, (t - 0.3) / 0.35))
-        if gh_t > 0:
-            gh_et = ease_out_cubic(gh_t)
-            gh_c = lerp_color(BG, WHITE, 0.7 * gh_et)
-            try:
-                bb = draw.textbbox((0, 0), GITHUB, font=font_med)
-                gw = bb[2] - bb[0]
-            except Exception:
-                gw = len(GITHUB) * 23
-            draw.text(((W - gw) // 2, cy + 30), GITHUB, font=font_med, fill=gh_c)
-
-        # Subscribe line
-        sub_t = max(0, min(1, (t - 0.6) / 0.35))
-        if sub_t > 0:
-            sub_et = ease_out_cubic(sub_t)
-            sub_text = "Subscribe  ·  More breakdowns coming"
-            sc2 = lerp_color(BG, GRAY, sub_et)
-            try:
-                bb = draw.textbbox((0, 0), sub_text, font=font_small)
-                sw2 = bb[2] - bb[0]
-            except Exception:
-                sw2 = len(sub_text) * 16
-            draw.text(((W - sw2) // 2, cy + 100), sub_text, font=font_small, fill=sc2)
-
-        # Decorative corner lines
-        corner_c = lerp_color(BG, accent, 0.5 * alpha)
-        length = 120
-        draw.line([(0, 0), (length, 0)], fill=corner_c, width=2)
-        draw.line([(0, 0), (0, length)], fill=corner_c, width=2)
-        draw.line([(W, H), (W - length, H)], fill=corner_c, width=2)
-        draw.line([(W, H), (W, H - length)], fill=corner_c, width=2)
-
-        img = scanlines(img)
-        frames.append(img)
-
+        frames.append(scanlines(img))
     return frames
 
 
 # ---------------------------------------------------------------------------
-# Render sequence to temp PNGs + write concat manifest
+# Render card frames → temp MP4
 # ---------------------------------------------------------------------------
 
-def render_sequence(frames: list[Image.Image], tmpdir: str, prefix: str,
-                    manifest_lines: list, duration_per_frame: float):
-    """Save frames to PNGs, append concat manifest entries."""
-    for i, frame in enumerate(frames):
-        path = os.path.join(tmpdir, f"{prefix}_{i:04d}.png")
-        frame.save(path)
-        manifest_lines.append(f"file '{path}'")
-        manifest_lines.append(f"duration {duration_per_frame:.6f}")
+def frames_to_mp4(frames, path, fps=FPS):
+    """Write list of PIL Images to an MP4 via ffmpeg pipe."""
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "rawvideo", "-vcodec", "rawvideo",
+        "-s", f"{W}x{H}", "-pix_fmt", "rgb24",
+        "-r", str(fps),
+        "-i", "pipe:0",
+        "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+        "-pix_fmt", "yuv420p",
+        "-an",
+        str(path),
+    ]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for frame in frames:
+        proc.stdin.write(frame.tobytes())
+    proc.stdin.close()
+    proc.wait()
 
 
 # ---------------------------------------------------------------------------
-# Main produce function
+# Main produce
 # ---------------------------------------------------------------------------
 
-def produce(problem_key: str, music_path: str | None = None,
-            output: str | None = None, fps: int = FPS):
-    cfg = PROBLEMS[problem_key]
-    accent = cfg["accent"]
-
-    # Validate example videos exist
+def produce(problem_key, music_path=None, output=None, fps=FPS):
+    cfg      = PROBLEMS[problem_key]
     examples = [p for p in cfg["examples"] if Path(p).exists()]
+
     if not examples:
-        print(f"No example videos found for {problem_key}. Expected files like:")
-        for p in cfg["examples"]:
-            print(f"  {p}")
+        print(f"No example videos found. Expected:")
+        for p in cfg["examples"]: print(f"  {p}")
         return
 
-    print(f"Producing: {cfg['title']} — {cfg['subtitle']}")
-    print(f"  Examples found: {len(examples)}")
+    print(f"Producing: {cfg['title']}")
+    print(f"  Examples: {len(examples)}")
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        manifest_lines = []
+    with tempfile.TemporaryDirectory() as tmp:
+        parts = []  # ordered list of MP4 paths to concat
 
-        # ── Intro (5 seconds) ──────────────────────────────────────────────
+        # Intro
         print("  Rendering intro...")
-        intro_frames = make_intro_frames(cfg, n_frames=5 * fps)
-        render_sequence(intro_frames, tmpdir, "intro", manifest_lines, 1.0 / fps)
+        intro_path = os.path.join(tmp, "intro.mp4")
+        frames_to_mp4(make_intro(cfg, 5 * fps), intro_path, fps)
+        parts.append(intro_path)
 
-        # ── Examples ──────────────────────────────────────────────────────
-        for i, ex_path in enumerate(examples, start=1):
-            label = f"Example {i}"
-            if len(cfg["examples"]) == 1:
-                label = "Example"
+        # Examples
+        for i, ex in enumerate(examples, 1):
+            parts.append(str(ex))
 
-            # Transition card (2 seconds)
-            print(f"  Rendering transition: {label}...")
-            t_frames = make_transition_frames(label, accent, n_frames=2 * fps)
-            render_sequence(t_frames, tmpdir, f"trans_{i}", manifest_lines, 1.0 / fps)
-
-            # The actual example video
-            manifest_lines.append(f"file '{ex_path}'")
-
-        # ── Outro (3 seconds) ─────────────────────────────────────────────
+        # Outro
         print("  Rendering outro...")
-        outro_frames = make_outro_frames(n_frames=3 * fps)
-        render_sequence(outro_frames, tmpdir, "outro", manifest_lines, 1.0 / fps)
+        outro_path = os.path.join(tmp, "outro.mp4")
+        frames_to_mp4(make_outro(3 * fps), outro_path, fps)
+        parts.append(outro_path)
 
-        # Write manifest
-        manifest_path = os.path.join(tmpdir, "manifest.txt")
-        with open(manifest_path, "w") as f:
-            f.write("\n".join(manifest_lines))
+        # Write concat manifest
+        manifest = os.path.join(tmp, "manifest.txt")
+        with open(manifest, "w") as f:
+            for p in parts:
+                f.write(f"file '{p}'\n")
 
-        # ── ffmpeg stitch ─────────────────────────────────────────────────
         if output is None:
             output = str(VIDEOS / f"{problem_key}_final.mp4")
-
         os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
-        print(f"  Stitching → {output}")
+
+        print(f"  Stitching {len(parts)} segments → {output}")
 
         if music_path and Path(music_path).exists():
-            # With music: concat demuxer for video, stream_loop for audio
             cmd = [
                 "ffmpeg", "-y",
-                "-f", "concat", "-safe", "0", "-i", manifest_path,
+                "-f", "concat", "-safe", "0", "-i", manifest,
                 "-stream_loop", "-1", "-i", str(music_path),
-                "-vf", f"fps={fps}",
-                "-c:v", "libx264", "-crf", "18", "-preset", "fast",
-                "-pix_fmt", "yuv420p",
+                "-c:v", "copy",
                 "-c:a", "aac", "-b:a", "192k",
                 "-af", "volume=0.15",
                 "-shortest",
@@ -588,11 +342,8 @@ def produce(problem_key: str, music_path: str | None = None,
         else:
             cmd = [
                 "ffmpeg", "-y",
-                "-f", "concat", "-safe", "0", "-i", manifest_path,
-                "-vf", f"fps={fps}",
-                "-c:v", "libx264", "-crf", "18", "-preset", "fast",
-                "-pix_fmt", "yuv420p",
-                "-an",
+                "-f", "concat", "-safe", "0", "-i", manifest,
+                "-c:v", "copy", "-an",
                 output,
             ]
 
@@ -607,27 +358,100 @@ def produce(problem_key: str, music_path: str | None = None,
 
 
 # ---------------------------------------------------------------------------
+# Series: stitch multiple problems with per-problem intros + shared outro
+# ---------------------------------------------------------------------------
+
+SERIES = {
+    "bfs": ["lc102", "lc200", "lc994"],
+}
+
+SERIES_TITLES = {
+    "bfs": "Breadth-First Search",
+}
+
+def produce_series(series_key, music_path=None, output=None, fps=FPS):
+    keys = SERIES[series_key]
+    print(f"Producing series: {' → '.join(keys)}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        parts = []
+
+        # Single series intro card at the very start
+        series_title = SERIES_TITLES.get(series_key, series_key.upper())
+        print(f"  Rendering series intro: {series_title}...")
+        series_cfg   = {"title": series_title, "accent": (180, 80, 255)}
+        series_intro = os.path.join(tmp, "series_intro.mp4")
+        frames_to_mp4(make_intro(series_cfg, 5 * fps), series_intro, fps)
+        parts.append(series_intro)
+
+        for ki, key in enumerate(keys):
+            cfg      = PROBLEMS[key]
+            examples = [p for p in cfg["examples"] if Path(p).exists()]
+            if not examples:
+                print(f"  Skipping {key} — no videos found")
+                continue
+
+            print(f"  [{ki+1}/{len(keys)}] Intro for {key}...")
+            intro_path = os.path.join(tmp, f"intro_{key}.mp4")
+            frames_to_mp4(make_intro(cfg, 5 * fps), intro_path, fps)
+            parts.append(intro_path)
+
+            for ex in examples:
+                parts.append(str(ex))
+
+        print("  Rendering outro...")
+        outro_path = os.path.join(tmp, "outro.mp4")
+        frames_to_mp4(make_outro(3 * fps), outro_path, fps)
+        parts.append(outro_path)
+
+        manifest = os.path.join(tmp, "manifest.txt")
+        with open(manifest, "w") as f:
+            for p in parts:
+                f.write(f"file '{p}'\n")
+
+        if output is None:
+            output = str(VIDEOS / f"{series_key}_final.mp4")
+        os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
+        print(f"  Stitching {len(parts)} segments → {output}")
+
+        if music_path and Path(music_path).exists():
+            cmd = [
+                "ffmpeg", "-y",
+                "-f", "concat", "-safe", "0", "-i", manifest,
+                "-stream_loop", "-1", "-i", str(music_path),
+                "-c:v", "copy",
+                "-c:a", "aac", "-b:a", "192k", "-af", "volume=0.15",
+                "-shortest", "-map", "0:v:0", "-map", "1:a:0",
+                output,
+            ]
+        else:
+            cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", manifest,
+                   "-c:v", "copy", "-an", output]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print("ffmpeg error:"); print(result.stderr[-3000:]); return
+
+    print(f"\nDone: {output}  ({Path(output).stat().st_size / 1e6:.1f} MB)")
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(
-        prog="produce",
-        description="LC-Viz YouTube production pipeline.",
-    )
-    parser.add_argument("problem",
-                        choices=list(PROBLEMS.keys()),
-                        help="Problem key (lc102, lc200, lc994, series994)")
-    parser.add_argument("--music", metavar="FILE",
-                        help="Background music MP3 (played at 15%% volume)")
-    parser.add_argument("--output", metavar="FILE",
-                        help="Output MP4 path (default: videos/<problem>_final.mp4)")
-    parser.add_argument("--fps", type=int, default=FPS,
-                        help=f"Output FPS (default {FPS})")
-
+    all_choices = list(PROBLEMS.keys()) + list(SERIES.keys())
+    parser = argparse.ArgumentParser(prog="produce")
+    parser.add_argument("problem", choices=all_choices)
+    parser.add_argument("--music",  metavar="FILE")
+    parser.add_argument("--output", metavar="FILE")
+    parser.add_argument("--fps",    type=int, default=FPS)
     ns = parser.parse_args()
-    produce(ns.problem, music_path=ns.music, output=ns.output, fps=ns.fps)
 
+    if ns.problem in SERIES:
+        produce_series(ns.problem, music_path=ns.music, output=ns.output, fps=ns.fps)
+    else:
+        produce(ns.problem, music_path=ns.music, output=ns.output, fps=ns.fps)
 
 if __name__ == "__main__":
     main()
