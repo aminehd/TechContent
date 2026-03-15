@@ -68,8 +68,9 @@ class VizEngine:
         except Exception:
             pass
 
-        fn_code = fn.__code__
-        engine  = self
+        fn_code      = fn.__code__
+        fn_qualname  = fn.__qualname__   # e.g. "numIslands"
+        engine       = self
 
         @functools.wraps(fn)
         def wrapper(*args, **kwargs):
@@ -88,8 +89,13 @@ class VizEngine:
                 return local_tracer
 
             def global_tracer(frame, event, arg):
-                if event == 'call' and frame.f_code is fn_code:
-                    return local_tracer
+                if event == 'call':
+                    if frame.f_code is fn_code:
+                        return local_tracer
+                    # Also trace nested functions defined inside fn (e.g. bfs inside numIslands)
+                    fq = getattr(frame.f_code, 'co_qualname', '')
+                    if fq.startswith(fn_qualname + '.<locals>.'):
+                        return local_tracer
                 return None
 
             old = sys.gettrace()

@@ -25,13 +25,13 @@ engine.config = RenderConfig(panels=[
 
 
 @engine.solution
+@engine.show
 def numIslands(raw_grid):
     grid = VizGrid(raw_grid)
     rows, cols = grid.rows, grid.cols
     count = 0
     queue = VizQueue()
 
-    @engine.show
     def bfs(r, c):
         nonlocal count
         queue.push((r, c))
