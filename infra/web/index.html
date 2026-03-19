@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>vizalgo — Number of Islands</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #080a12;
+    --bg2:      #0e1220;
+    --bg3:      #141828;
+    --border:   #1e2438;
+    --cyan:     #00e6e6;
+    --green:    #46dc6e;
+    --yellow:   #ffd033;
+    --orange:   #ff8c1a;
+    --purple:   #b450ff;
+    --teal:     #00e6b4;
+    --white:    #e0e8ff;
+    --gray:     #5a6480;
+    --dim:      #2a3050;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--white);
+    font-family: "Menlo", "Monaco", "Courier New", monospace;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Header ─────────────────────────────────────── */
+  #header {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  #header h1 { font-size: 18px; color: var(--green); letter-spacing: 1px; }
+  #header .badge {
+    font-size: 11px; padding: 3px 10px;
+    border-radius: 4px; border: 1px solid;
+  }
+  .badge-medium { color: var(--yellow); border-color: var(--yellow); }
+  .badge-tag    { color: var(--cyan);   border-color: var(--cyan);   opacity: .7; }
+  #desc-bar {
+    margin-left: auto;
+    font-size: 13px;
+    color: var(--white);
+    max-width: 500px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── Main layout ────────────────────────────────── */
+  #main {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    gap: 1px;
+    background: var(--border);
+  }
+
+  /* ── Left: grid ─────────────────────────────────── */
+  #grid-panel {
+    flex: 0 0 54%;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    position: relative;
+  }
+  #grid-panel h3 {
+    position: absolute; top: 10px; left: 16px;
+    font-size: 11px; color: var(--green); letter-spacing: 2px;
+  }
+  #grid-svg { display: block; }
+
+  /* ── Right column ───────────────────────────────── */
+  #right {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    gap: 1px;
+  }
+
+  /* ── Code panel ─────────────────────────────────── */
+  #code-panel {
+    flex: 0 0 58%;
+    background: var(--bg2);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  #code-panel h3 {
+    font-size: 11px; color: var(--cyan); letter-spacing: 2px;
+    padding: 8px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  #code-scroll {
+    overflow-y: auto;
+    flex: 1;
+    padding: 6px 0;
+  }
+  .code-line {
+    display: flex;
+    align-items: center;
+    padding: 1px 0;
+    transition: background 0.15s;
+    white-space: pre;
+  }
+  .code-line.active {
+    background: #1a2a44;
+    border-left: 3px solid var(--cyan);
+  }
+  .code-line:not(.active) { border-left: 3px solid transparent; }
+  .ln {
+    color: var(--dim); font-size: 12px;
+    min-width: 38px; text-align: right; padding-right: 10px;
+    user-select: none; flex-shrink: 0;
+  }
+  .ln.active-ln { color: var(--cyan); }
+  .ptr { color: var(--cyan); font-size: 12px; width: 14px; flex-shrink: 0; }
+  .code-text { font-size: 13px; }
+
+  /* syntax colors */
+  .kw  { color: #be78ff; }
+  .bn  { color: #50beff; }
+  .nm  { color: #ffc846; }
+  .op  { color: #50e6dc; }
+  .st  { color: #50c878; }
+  .cm  { color: #3d6e3d; }
+
+  /* ── Queue panel ─────────────────────────────────── */
+  #queue-panel {
+    flex: 1;
+    background: var(--bg2);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #queue-panel h3 {
+    font-size: 11px; color: var(--cyan); letter-spacing: 2px;
+    padding: 8px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+  }
+  #queue-items {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 14px;
+    overflow-x: auto;
+    flex: 1;
+  }
+  .q-item {
+    background: #102060;
+    border: 1px solid #4090cc;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 13px;
+    color: var(--white);
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition: all 0.2s;
+  }
+  .q-item.front {
+    border-color: var(--cyan);
+    box-shadow: 0 0 8px var(--cyan);
+    color: var(--cyan);
+  }
+  .q-arrow { color: #4090cc; font-size: 14px; }
+  .q-empty { color: var(--gray); font-size: 13px; font-style: italic; }
+
+  /* ── Stats panel ─────────────────────────────────── */
+  #stats-panel {
+    flex: 0 0 52px;
+    background: var(--bg2);
+    display: flex;
+    align-items: center;
+    padding: 0 18px;
+    gap: 32px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .stat { display: flex; align-items: center; gap: 10px; }
+  .stat-label { font-size: 11px; color: var(--gray); }
+  .stat-value { font-size: 22px; font-weight: bold; color: var(--green); }
+
+  /* ── Controls ────────────────────────────────────── */
+  #controls {
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  button {
+    background: #141c38;
+    color: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 20px;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  button:hover:not(:disabled) {
+    background: #1e2a50;
+    border-color: var(--cyan);
+    color: var(--cyan);
+  }
+  button:disabled { opacity: 0.3; cursor: default; }
+  #step-label {
+    color: var(--gray); font-size: 13px;
+    min-width: 100px; text-align: center;
+  }
+  #example-select {
+    background: #141c38;
+    color: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 12px;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    margin-left: auto;
+  }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: var(--bg2); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div id="header">
+  <h1 id="prob-title">Loading...</h1>
+  <span class="badge badge-medium">Medium</span>
+  <span class="badge badge-tag">BFS</span>
+  <span class="badge badge-tag">Grid</span>
+  <span id="desc-bar"></span>
+</div>
+
+<!-- Main -->
+<div id="main">
+
+  <!-- Grid -->
+  <div id="grid-panel">
+    <h3>GRID</h3>
+    <svg id="grid-svg"></svg>
+  </div>
+
+  <!-- Right -->
+  <div id="right">
+
+    <div id="code-panel">
+      <h3>CODE</h3>
+      <div id="code-scroll"></div>
+    </div>
+
+    <div id="queue-panel">
+      <h3>BFS QUEUE</h3>
+      <div id="queue-items"><span class="q-empty">(empty)</span></div>
+    </div>
+
+    <div id="stats-panel">
+      <div class="stat">
+        <span class="stat-label">ISLANDS FOUND</span>
+        <span class="stat-value" id="stat-count">0</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">QUEUE SIZE</span>
+        <span class="stat-value" id="stat-queue" style="color:var(--cyan)">0</span>
+      </div>
+      <div class="stat">
+        <span class="stat-label">STEP</span>
+        <span class="stat-value" id="stat-step" style="color:var(--gray);font-size:16px">—</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Controls -->
+<div id="controls">
+  <button id="btn-reset">⟳ Reset</button>
+  <button id="btn-prev">◀ Prev</button>
+  <span id="step-label">—</span>
+  <button id="btn-next">Next ▶</button>
+  <select id="example-select"></select>
+</div>
+
+<script>
+const API = "http://localhost:8000";
+
+// ── Cell colors ───────────────────────────────────────────────────────────
+const ISLAND_COLORS = ["#32c8ff","#ff8c1a","#b450ff","#00e6b4"];
+const ISLAND_GLOW   = ["#32c8ff","#ff8c1a","#b450ff","#00e6b4"];
+
+function cellColor(s) {
+  if (s === 0) return "#0a1428";
+  if (s === 1) return "#28b44a";
+  if (s === 2) return "#ffd033";
+  if (s >= 10) return ISLAND_COLORS[(s - 10) % ISLAND_COLORS.length];
+  return "#0a1428";
+}
+function cellStroke(s) {
+  if (s === 0) return "#142040";
+  if (s === 1) return "#3cd460";
+  if (s === 2) return "#ffe070";
+  if (s >= 10) return ISLAND_COLORS[(s - 10) % ISLAND_COLORS.length];
+  return "#142040";
+}
+
+// ── State ─────────────────────────────────────────────────────────────────
+let runs       = [];
+let runIdx     = 0;
+let snapIdx    = 0;
+let snapshots  = [];
+let sourceLines = [];
+
+// ── Grid (D3) ─────────────────────────────────────────────────────────────
+const svg = d3.select("#grid-svg");
+let cellSize = 70, gap = 6;
+
+function drawGrid(grid) {
+  if (!grid || grid.length === 0) return;
+  const rows = grid.length, cols = grid[0].length;
+
+  const panelW = document.getElementById("grid-panel").clientWidth  - 32;
+  const panelH = document.getElementById("grid-panel").clientHeight - 60;
+  cellSize = Math.min(Math.floor(panelW / cols), Math.floor(panelH / rows), 90) - gap;
+
+  const totalW = cols * (cellSize + gap) - gap;
+  const totalH = rows * (cellSize + gap) - gap;
+
+  svg.attr("width",  totalW)
+     .attr("height", totalH);
+
+  // Rows
+  const rowG = svg.selectAll("g.row").data(grid, (_, i) => i);
+  const rowEnter = rowG.enter().append("g").attr("class","row");
+  rowG.merge(rowEnter).attr("transform", (_, i) => `translate(0,${i * (cellSize + gap)})`);
+  rowG.exit().remove();
+
+  // Cells
+  svg.selectAll("g.row").each(function(rowData, r) {
+    const cells = d3.select(this).selectAll("g.cell").data(rowData, (_, c) => c);
+
+    const cellEnter = cells.enter().append("g").attr("class","cell");
+
+    // Background rect
+    cellEnter.append("rect")
+      .attr("rx", 6).attr("ry", 6)
+      .attr("width", cellSize).attr("height", cellSize);
+
+    // Icon group
+    cellEnter.append("g").attr("class","icon");
+
+    const merged = cells.merge(cellEnter)
+      .attr("transform", (_, c) => `translate(${c * (cellSize + gap)},0)`);
+
+    // Update rect
+    merged.select("rect")
+      .transition().duration(180)
+      .attr("fill",   s => cellColor(s))
+      .attr("stroke", s => cellStroke(s))
+      .attr("stroke-width", s => (s === 2 || s >= 10) ? 2 : 1);
+
+    // Update icon
+    merged.select("g.icon").each(function(s) {
+      const g   = d3.select(this);
+      const cx  = cellSize / 2, cy = cellSize / 2;
+      g.selectAll("*").remove();
+
+      if (s === 1) {
+        // Mountain triangle
+        const mh = Math.max(6, cellSize / 5);
+        const mw = Math.max(8, cellSize / 3.5);
+        g.append("polygon")
+         .attr("points", `${cx},${cy - mh} ${cx - mw},${cy + mh/2} ${cx + mw},${cy + mh/2}`)
+         .attr("fill","#3cd460").attr("opacity",0.7);
+      } else if (s === 2) {
+        g.append("circle").attr("cx",cx).attr("cy",cy)
+         .attr("r", Math.max(4, cellSize/7))
+         .attr("fill","#ffe070");
+      } else if (s >= 10) {
+        const col = ISLAND_COLORS[(s-10) % ISLAND_COLORS.length];
+        g.append("circle").attr("cx",cx).attr("cy",cy)
+         .attr("r", Math.max(5, cellSize/6))
+         .attr("fill", col).attr("opacity",0.8);
+      }
+    });
+
+    cells.exit().remove();
+  });
+}
+
+// ── Code panel ───────────────────────────────────────────────────────────
+const KW  = new Set(["def","return","if","else","elif","for","while","in","not","and","or","True","False","None","import","from","as","class","with","yield","nonlocal"]);
+const BLT = new Set(["len","range","print","int","str","list","dict","set","min","max","enumerate","zip"]);
+const TOK = /(\s+|#[^\n]*|"[^"]*"|'[^']*'|\b\d+\b|[+\-*/=<>!&|%^~]+|\w+|.)/g;
+
+function syntaxHL(text) {
+  return text.replace(TOK, (t) => {
+    if (!t.trim()) return t;
+    if (t.startsWith('#'))         return `<span class="cm">${esc(t)}</span>`;
+    if (t.startsWith('"')||t.startsWith("'")) return `<span class="st">${esc(t)}</span>`;
+    if (KW.has(t))                 return `<span class="kw">${esc(t)}</span>`;
+    if (BLT.has(t))                return `<span class="bn">${esc(t)}</span>`;
+    if (/^\d+$/.test(t))          return `<span class="nm">${esc(t)}</span>`;
+    if (/^[+\-*/=<>!&|%^~]+$/.test(t)) return `<span class="op">${esc(t)}</span>`;
+    return esc(t);
+  });
+}
+function esc(s) { return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function buildCodePanel(lines) {
+  const container = document.getElementById("code-scroll");
+  container.innerHTML = lines.map((line, i) => `
+    <div class="code-line" id="cl-${i}" data-line="${i}">
+      <span class="ln" id="ln-${i}">${i+1}</span>
+      <span class="ptr" id="ptr-${i}"></span>
+      <span class="code-text">${syntaxHL(line)}</span>
+    </div>`).join("");
+}
+
+function highlightLine(line) {
+  document.querySelectorAll(".code-line").forEach(el => el.classList.remove("active"));
+  document.querySelectorAll(".ln").forEach(el => el.classList.remove("active-ln"));
+  document.querySelectorAll(".ptr").forEach(el => el.textContent = "");
+
+  const el = document.getElementById(`cl-${line}`);
+  if (el) {
+    el.classList.add("active");
+    document.getElementById(`ln-${line}`).classList.add("active-ln");
+    document.getElementById(`ptr-${line}`).textContent = "►";
+    el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+}
+
+// ── Queue panel ──────────────────────────────────────────────────────────
+function drawQueue(queue) {
+  const container = document.getElementById("queue-items");
+  if (!queue || queue.length === 0) {
+    container.innerHTML = '<span class="q-empty">(empty)</span>';
+    return;
+  }
+  container.innerHTML = queue.map((item, i) => {
+    const label = Array.isArray(item) ? `(${item.join(", ")})` : String(item);
+    const front = i === 0 ? "front" : "";
+    const arrow = i < queue.length - 1 ? '<span class="q-arrow">→</span>' : "";
+    return `<div class="q-item ${front}">${label}</div>${arrow}`;
+  }).join("");
+}
+
+// ── Render snapshot ──────────────────────────────────────────────────────
+function showSnap(idx) {
+  snapIdx = Math.max(0, Math.min(snapshots.length - 1, idx));
+  const s = snapshots[snapIdx];
+
+  drawGrid(s.data.grid || []);
+  drawQueue(s.data.queue || []);
+  highlightLine(s.line);
+
+  document.getElementById("desc-bar").textContent      = s.description || "";
+  document.getElementById("stat-count").textContent    = s.data.count ?? 0;
+  document.getElementById("stat-queue").textContent    = (s.data.queue || []).length;
+  document.getElementById("stat-step").textContent     = `${snapIdx + 1} / ${snapshots.length}`;
+  document.getElementById("step-label").textContent    = `${snapIdx + 1} / ${snapshots.length}`;
+
+  document.getElementById("btn-prev").disabled = snapIdx === 0;
+  document.getElementById("btn-next").disabled = snapIdx === snapshots.length - 1;
+}
+
+// ── Load run ─────────────────────────────────────────────────────────────
+function loadRun(idx) {
+  runIdx    = idx;
+  const run = runs[idx];
+  snapshots  = run.snapshots;
+  sourceLines = run.source_lines || [];
+  buildCodePanel(sourceLines);
+  showSnap(0);
+}
+
+// ── Controls ─────────────────────────────────────────────────────────────
+document.getElementById("btn-next").addEventListener("click",  () => showSnap(snapIdx + 1));
+document.getElementById("btn-prev").addEventListener("click",  () => showSnap(snapIdx - 1));
+document.getElementById("btn-reset").addEventListener("click", () => showSnap(0));
+
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); showSnap(snapIdx + 1); }
+  if (e.key === "ArrowLeft")                   { e.preventDefault(); showSnap(snapIdx - 1); }
+  if (e.key === "Home")                         showSnap(0);
+  if (e.key === "End")                          showSnap(snapshots.length - 1);
+});
+
+document.getElementById("example-select").addEventListener("change", e => {
+  loadRun(parseInt(e.target.value));
+});
+
+// ── Fetch & init ─────────────────────────────────────────────────────────
+fetch(`${API}/problems/lc200/frames`)
+  .then(r => r.json())
+  .then(data => {
+    document.getElementById("prob-title").textContent =
+      `${data.problem} · ${data.title}`;
+
+    runs = data.runs;
+
+    const sel = document.getElementById("example-select");
+    runs.forEach((run, i) => {
+      const opt = document.createElement("option");
+      opt.value       = i;
+      opt.textContent = `Example ${run.example}`;
+      sel.appendChild(opt);
+    });
+
+    loadRun(0);
+  })
+  .catch(err => {
+    document.getElementById("prob-title").textContent = "API error — is the server running?";
+    console.error(err);
+  });
+</script>
+</body>
+</html>
