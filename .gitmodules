@@ -7,3 +7,6 @@
 [submodule "solutions"]
 	path = solutions
 	url = git@github.com:aminehd/vizalgo-solutions.git
+[submodule "infra/web"]
+	path = infra/web
+	url = git@github.com:aminehd/vizalgo-web.git
