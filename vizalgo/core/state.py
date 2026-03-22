@@ -16,6 +16,8 @@ class VizGrid:
                 else:
                     new_row.append(int(cell))
             self._grid.append(new_row)
+        self.cursor    = None   # (r, c) — cell currently being processed
+        self.neighbors = []     # [(r, c), ...] — cells being considered
 
     def __getitem__(self, r):
         return self._grid[r]
@@ -36,8 +38,12 @@ class VizGrid:
         return len(self._grid[0]) if self._grid else 0
 
     def snapshot(self):
-        """Return list[list[int]] deep copy of current state."""
-        return copy.deepcopy(self._grid)
+        """Return dict with cells, cursor, and neighbors."""
+        return {
+            "cells":     copy.deepcopy(self._grid),
+            "cursor":    list(self.cursor) if self.cursor is not None else None,
+            "neighbors": [list(n) for n in self.neighbors],
+        }
 
 
 class VizQueue:

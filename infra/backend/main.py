@@ -59,25 +59,33 @@ def _load_lc200():
         rows, cols = grid.rows, grid.cols
         count = 0
         queue = VizQueue()
+        engine.snap("Initial grid")
 
         def bfs(r, c):
             nonlocal count
             queue.push((r, c))
             grid[r][c] = 2
+            grid.cursor = (r, c)
+            grid.neighbors = []
             engine.snap(f"BFS island {count} from ({r},{c})")
             while queue:
                 cr, cc = queue.pop()
-                grid[cr][cc] = 10 + count
+                grid[cr][cc] = 2
+                grid.cursor = (cr, cc)
+                grid.neighbors = []
                 engine.snap(f"Marking ({cr},{cc}) as island {count}")
                 for dr, dc in [(0, 1), (0, -1), (1, 0), (-1, 0)]:
                     nr, nc = cr + dr, cc + dc
                     if grid.valid(nr, nc) and grid[nr][nc] == 1:
                         grid[nr][nc] = 2
                         queue.push((nr, nc))
+                        grid.neighbors.append((nr, nc))
                         engine.snap(f"Enqueue ({nr},{nc})")
 
         for r in range(rows):
             for c in range(cols):
+                grid.cursor = (r, c)
+                grid.neighbors = []
                 if grid[r][c] == 1:
                     count += 1
                     engine.snap(f"Found land at ({r},{c}) -> island {count}")

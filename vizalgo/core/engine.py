@@ -120,7 +120,7 @@ class VizEngine:
     def run(self, fn, *args):
         return fn(*args)
 
-    def render(self, renderer, output: str):
+    def render(self, renderer, output: str = None):
         renderer.render(
             self.snapshots, output,
             problem=self.problem,
