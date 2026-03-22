@@ -1,0 +1,9 @@
+[submodule "vizalgo"]
+	path = vizalgo
+	url = git@github.com:aminehd/vizalgo.git
+[submodule "infra/backend"]
+	path = infra/backend
+	url = git@github.com:aminehd/vizalgo-api.git
+[submodule "solutions"]
+	path = solutions
+	url = git@github.com:aminehd/vizalgo-solutions.git
