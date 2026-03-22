@@ -37,6 +37,12 @@ body {
   flex-shrink: 0;
 }
 #header h1 { font-size: 18px; color: var(--green); letter-spacing: 1px; }
+#problem-select {
+  background: var(--bg3); color: var(--cyan);
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 5px 10px; font-family: inherit; font-size: 12px;
+  cursor: pointer;
+}
 .badge { font-size: 11px; padding: 3px 10px; border-radius: 4px; border: 1px solid; }
 .badge-medium { color: var(--yellow); border-color: var(--yellow); }
 .badge-tag    { color: var(--cyan);   border-color: var(--cyan); opacity: .7; }
