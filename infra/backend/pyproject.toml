@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vizalgo-api"
+version = "0.1.0"
+description = "vizalgo FastAPI backend"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "vizalgo",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["infra/backend"]

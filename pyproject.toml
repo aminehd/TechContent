@@ -1,0 +1,14 @@
+[project]
+name = "viz-workspace"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.uv.workspace]
+members = [
+    "vizalgo",
+    "infra/backend",
+    "solutions",
+]
+
+[tool.uv.sources]
+vizalgo = { workspace = true }
